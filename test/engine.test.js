@@ -305,6 +305,52 @@ it('入参缺失时给出可读错误而不是抛异常', () => {
   assert.ok(calculate({ persons: [{ birth: '1990-01' }], loanNeed: 0 }).error);
 });
 
+it('出生日期填到「日」时，与只填「年月」结果完全一致', () => {
+  // 界面上的出生日期控件允许填年-月-日，但官方对照表是按「出生年月」划档，
+  // 日不参与计算 —— 这条断言把这个口径钉死，防止以后有人误按日去算退休年龄。
+  const monthOnly = calculate({
+    ...base,
+    persons: [
+      { label: '借款人', birth: '1992-06', category: 'male', balance: 86000, monthlyDeposit: 2600 },
+      { label: '共同借款人', birth: '1994-03', category: 'female_manager', balance: 62000, monthlyDeposit: 1900 }
+    ]
+  });
+  const fullDate = calculate({
+    ...base,
+    persons: [
+      { label: '借款人', birth: '1992-06-15', category: 'male', balance: 86000, monthlyDeposit: 2600 },
+      { label: '共同借款人', birth: '1994-03-28', category: 'female_manager', balance: 62000, monthlyDeposit: 1900 }
+    ]
+  });
+  assert.strictEqual(fullDate.maxLoanGjj, monthOnly.maxLoanGjj, '可贷额度不该受「日」影响');
+  assert.strictEqual(fullDate.formulaTotal, monthOnly.formulaTotal, '额度公式不该受「日」影响');
+  assert.strictEqual(fullDate.maxTermAllowed, monthOnly.maxTermAllowed, '可贷期限不该受「日」影响');
+  assert.deepStrictEqual(
+    fullDate.perPerson.map((p) => p.retire.retireDate),
+    monthOnly.perPerson.map((p) => p.retire.retireDate),
+    '退休年月不该受「日」影响'
+  );
+  // 退休口径里回显的出生信息统一归一化成「YYYY-MM」，不把无意义的「日」带进来
+  assert.ok(/^\d{4}-\d{2}$/.test(fullDate.perPerson[0].retire.birth), fullDate.perPerson[0].retire.birth);
+  assert.strictEqual(fullDate.perPerson[0].retire.birth, '1992-06');
+  assert.strictEqual(fullDate.perPerson[1].retire.birth, '1994-03');
+});
+
+it('同一月内的不同「日」，退休年龄按月划档应完全相同', () => {
+  assert.strictEqual(
+    R.retireAge('1970-05-01', 'male').ageMonths,
+    R.retireAge('1970-05-31', 'male').ageMonths
+  );
+  assert.strictEqual(
+    R.monthsToRetire('1970-05-01', 'male', '2026-09-21').monthsLeft,
+    R.monthsToRetire('1970-05-31', 'male', '2026-09-21').monthsLeft
+  );
+  assert.strictEqual(
+    R.retireAge('1970-05-31', 'male').retireDate,
+    R.retireAge('1970-05-01', 'male').retireDate
+  );
+});
+
 /* ------------------------------ 执行 ------------------------------ */
 
 let failed = 0;

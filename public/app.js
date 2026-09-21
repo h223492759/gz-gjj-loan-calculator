@@ -34,6 +34,18 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/**
+ * 出生日期 → date 控件的 value。
+ * 官方《渐进式延迟法定退休年龄》是按「出生年月」划档的，日不参与计算，
+ * 所以历史数据里可能只存了 'YYYY-MM'；补一个 '-01' 让 date 控件能正常显示回填。
+ */
+const birthToInput = (v) => {
+  const s = String(v == null ? '' : v).trim();
+  if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return '';
+};
+
 /** 元 → 「x.xx 万」 */
 function wan(v, digits) {
   const d = digits == null ? 2 : digits;
@@ -264,8 +276,9 @@ function buildPersonBoxes(mode, preset) {
       <h3>${i === 0 ? '借款人' : '共同借款人'}</h3>
       <div class="person-grid">
         <div class="span2">
-          <label>出生年月</label>
-          <input type="month" class="p-birth" value="${esc(p.birth || '')}">
+          <label>出生年月日</label>
+          <input type="date" class="p-birth" min="1900-01-01" max="${esc(new Date().toISOString().slice(0, 10))}" value="${esc(birthToInput(p.birth))}">
+          <div class="hint">按官方《渐进式延迟法定退休年龄》对照表以「出生年月」划档，填到日即可，日不参与计算</div>
         </div>
         <div class="span2">
           <label>身份类别（决定法定退休年龄）</label>
