@@ -463,15 +463,20 @@ it('可提取余额 = 提完之后仍够贷到本次金额的那部分，双人�
 
   // 每人之和必须等于合计（取整零头不能凭空多出/少掉）
   const sum = big.withdraw.perPerson.reduce((s, x) => s + x.withdrawable, 0);
-  assert.ok(Math.abs(sum - big.withdraw.safeLimit) < 0.02, `每人之和 ${sum} ≠ 合计 ${big.withdraw.safeLimit}`);
+  assert.strictEqual(sum, big.withdraw.safeLimit, `每人之和 ${sum} ≠ 合计 ${big.withdraw.safeLimit}`);
   big.withdraw.perPerson.forEach((p, i) => {
     const src = big.perPerson[i];
     assert.ok(Math.abs(p.withdrawable - 0) >= 0 && p.balance >= p.withdrawable - 0.01, `${p.label} 不能超过自己的余额`);
     assert.ok(near(p.keep, src.balance - p.withdrawable, 0.02), `${p.label} 保留额应为 余额 − 可提取`);
   });
-  // 按余额占比分摊：50 万 : 40 万
+  // 按余额占比分摊：50 万 : 40 万（每人各自取整到元，零头补给余额大的那个，容差 ≤ 2 元）
   const a = big.withdraw.perPerson[0];
-  assert.ok(near(a.withdrawable, 400000 * (500000 / 900000), 0.02), `实际 ${a.withdrawable}`);
+  assert.ok(near(a.withdrawable, 400000 * (500000 / 900000), 2), `实际 ${a.withdrawable}`);
+  // 报出来的数必须是整元：带角分的数用户照抄就会多提，×10 放大成几百元额度差
+  big.withdraw.perPerson.forEach((p) => {
+    assert.strictEqual(p.withdrawable, Math.floor(p.withdrawable), `${p.label} 可提取额 ${p.withdrawable} 必须是整元`);
+  });
+  assert.strictEqual(big.withdraw.safeLimit, Math.floor(big.withdraw.safeLimit), '合计可提取额必须是整元');
 
   // 提完之后公式额必须仍然撑得住原来的可贷额
   const after = big.perPerson.reduce((s, p, i) =>
@@ -495,6 +500,29 @@ it('额度被公式本身卡住时，本次要贷的金额已用尽公式额 →
   assert.strictEqual(r.withdraw.safeLimit, 0);
   assert.strictEqual(r.withdraw.keepBalance, r.withdraw.totalBalance, '余额必须全部留下');
   assert.ok(r.notes.some((n) => /公式额用尽/.test(n)), '要说明为什么不能提');
+});
+
+it('可提取额必须报「整元」：照报出来的数提走，本次一定还贷得下来（余额 ×10 进公式，带角分会放大成几百元额度差）', () => {
+  const mk = (b2) => calculate({
+    ...base,
+    houseTotalPrice: 0,
+    childPolicy: 'one',
+    asOf: '2026-09-21',
+    persons: [
+      { label: '借款人', birth: '1991-09-01', category: 'male', balance: 39903.85, monthlyDeposit: 840 },
+      { label: '共同借款人', birth: '1990-07-02', category: 'female_manager', balance: b2, monthlyDeposit: 1710 }
+    ]
+  });
+  const r = mk(169724.88);
+  const w = r.withdraw.safeLimit;
+  assert.strictEqual(w, Math.floor(w), `可提取额 ${w} 必须是整元，不能报带角分的数`);
+  assert.ok(r.withdraw.slackRaw - w < 1, `报数 ${w} 与精确上限 ${r.withdraw.slackRaw} 相差不该超过 1 元`);
+  assert.strictEqual(r.withdraw.afterWithdraw.stillCovers, true, '复核必须判定为「仍贷得下来」');
+  // 照报出来的数提走 → 仍然满贷 200 万
+  const after = mk(169724.88 - w);
+  assert.ok(after.maxLoanGjj >= 2000000, `照报出的 ${w} 元提走后只剩 ${after.maxLoanGjj}，贷不满 200 万`);
+  // 反向钉住：多提 100 元就会掉 1000 元额度 —— 这就是不能报「8.27 万」这种模糊数的原因
+  assert.ok(mk(169724.88 - (w + 100)).maxLoanGjj < 2000000, '多提 100 元就该贷不满，说明报数也没保守过头');
 });
 
 it('逐年月供对照表：最多 30 行，末期归零，逐年累加等于总额', () => {

@@ -319,20 +319,41 @@ function calculate(input) {
   //   可动用余额 = (公式额合计 − 本次贷款额) ÷ 10，再受「账户余额」「首期房款」封顶。
   //   （口径说明：按「本次实际需要」而非「最高可贷上限」，不做保留追加贷款能力的保守折算。）
   const formulaSlackBalance = Math.max(0, yuan((formulaTotal - gjjAmount) / mult));
-  const safeLimit = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
+  const slackRaw = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
+  // 向下取整到「元」再报数：余额是 ×10 进公式的，1 元余额 = 10 元额度。
+  // 报 82654.73 元这种带角分的数，用户照着填就会多提、额度掉几百元（×10 放大）；
+  // 取整到元宁可少提几角，也保证「照报出来的这个数提取，本次一定还贷得下来」。
+  const safeLimit = Math.max(0, yuanFloor(slackRaw));
   const share = totalBalance > 0 ? totalBalance : 1;
   const safePer = perPerson.map((p) => {
-    const own = totalBalance > 0 ? yuan(safeLimit * (p.balance / share)) : 0;
+    const own = totalBalance > 0 ? yuanFloor(safeLimit * (p.balance / share)) : 0;
     return { label: p.label, balance: p.balance, withdrawable: own, keep: yuan(p.balance - own) };
   });
-  const sumSafe = yuan(safePer.reduce((s, x) => s + x.withdrawable, 0));
-  if (safePer.length && Math.abs(sumSafe - safeLimit) > 0.005) {
-    // 取整零头落到最后一个人的额度上，保证「每人可提取之和 = 可提取合计」
-    const last = safePer[safePer.length - 1];
-    last.withdrawable = yuan(Math.max(0, last.withdrawable + yuan(safeLimit - sumSafe)));
-    last.keep = yuan(last.balance - last.withdrawable);
+  const sumSafe = safePer.reduce((s, x) => s + x.withdrawable, 0);
+  const rem = safeLimit - sumSafe;   // 每人各自向下取整剩下的零头，0 ~ (人数−1) 元
+  if (rem !== 0 && safePer.length) {
+    // 零头补给余额最多的那个人（放不下就不补，宁少不多），保证「每人之和 = 合计」
+    const idx = safePer.reduce((best, x, i) => (x.balance > safePer[best].balance ? i : best), 0);
+    const canTake = Math.min(rem, yuanFloor(safePer[idx].balance) - safePer[idx].withdrawable);
+    if (canTake > 0) {
+      safePer[idx].withdrawable = yuan(safePer[idx].withdrawable + canTake);
+      safePer[idx].keep = yuan(safePer[idx].balance - safePer[idx].withdrawable);
+    }
   }
   const keepBalance = yuan(totalBalance - safeLimit);
+
+  // 复核：按报出来的这个数提走之后，公式额还剩多少、够不够本次这一笔
+  const afterFormula = yuan(formulaTotal - safeLimit * mult);
+  const afterWithdraw = {
+    withdraw: safeLimit,
+    formulaTotal: afterFormula,
+    needed: yuan(gjjAmount),
+    stillCovers: afterFormula >= gjjAmount - 0.005,
+    margin: yuan(afterFormula - gjjAmount),
+    text: afterFormula >= gjjAmount - 0.005
+      ? `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后，额度公式仍有 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，不低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元（余量 ${yuan(afterFormula - gjjAmount).toLocaleString('zh-CN')} 元）。`
+      : `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后额度公式只剩 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，已低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元。`
+  };
 
   const withdraw = {
     downPayment,
@@ -340,8 +361,10 @@ function calculate(input) {
     onceLimit,
     balanceMultiplier: mult,
     formulaSlackBalance,
+    slackRaw,
     bindingKey: binding.key,
     safeLimit,
+    afterWithdraw,
     keepBalance,
     remainInAccount: keepBalance,
     totalLimit: yuan(totalPrice + total.totalInterest),
@@ -349,7 +372,7 @@ function calculate(input) {
     note: cfg.withdraw.once_limit
   };
   if (safeLimit > 0) {
-    notes.push(`账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元，提取后额度公式仍有 ${yuan(formulaTotal - safeLimit * mult).toLocaleString('zh-CN')} 元，不低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元。`);
+    notes.push(`账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元（已向下取整到元，${afterWithdraw.text}）。`);
   } else if (binding.key === 'formula') {
     notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元；本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元已把公式额用尽，因此当前可提取额为 0。`);
   }
