@@ -633,6 +633,9 @@ function render(r) {
   const t = r.payment.total;
   const warnList = r.warnings || [];
   const noteList = r.notes || [];
+  // 两种还款方式并列展示（不提供选择），KPI 与说明多处要用
+  const mInst = (r.methods || []).find((x) => x.key === 'equal_installment') || {};
+  const mPrin = (r.methods || []).find((x) => x.key === 'equal_principal') || {};
 
   let html = '';
 
@@ -640,24 +643,26 @@ function render(r) {
   const cls = warnList.some((w) => /超出|超过|无法|不成立/.test(w)) ? 'bad' : (r.fullCover ? 'ok' : 'warn');
   html += `<div class="verdict ${cls}">
     <h2>${r.fullCover ? '✅ 可以满贷：纯公积金就够' : '⚠️ 公积金不足以覆盖，需要组合贷'}</h2>
-    <p>${esc(r.city)} · ${r.mode === 'couple' ? '双人共同申请' : '单人申请'} · ${esc(r.rate.label)} · ${r.termYears} 年 · ${r.repayment === undefined ? '' : ''}${r.method === 'equal_principal' ? '等额本金' : '等额本息'}</p>
+    <p>${esc(r.city)} · ${r.mode === 'couple' ? '双人共同申请' : '单人申请'} · ${esc(r.rate.label)} · ${r.termYears} 年</p>
     <div class="verdict-line">
       需要贷款 <b>${wan(r.loanNeed)} 万</b> →
-      公积金可贷 <b>${wan(r.gjjAmount)} 万</b>${r.commercialAmount > 0 ? `，缺口 <b>${wan(r.commercialAmount)} 万</b> 需走商贷` : '，<b>无需商贷</b>'}
+      公积金可贷 <b>${wan(r.gjjAmount)} 万</b>${r.maxLoanGjj - r.gjjAmount > 1 ? `（当前叠加满贷 <b>${wan(r.maxLoanGjj)} 万</b>，含上浮）` : ''}${r.commercialAmount > 0 ? `，缺口 <b>${wan(r.commercialAmount)} 万</b> 需走商贷` : '，<b>无需商贷</b>'}
     </div>
     ${r.termAdjusted ? `<div class="verdict-line">⚠️ 期限已按政策上限自动修正为 <b>${r.termYears} 年</b>（你选的是 ${r.requestedTermYears} 年）</div>` : ''}
   </div>`;
 
   /* ---- 关键数字 ---- */
   html += `<div class="kpis">
-    ${kpi('公积金可贷额度', wan(r.gjjAmount), ' 万', true)}
+    ${kpi('本次贷款金额', wan(r.loanNeed), ' 万')}
+    ${kpi('公积金可贷额度', wan(r.maxLoanGjj), ' 万', true)}
     ${kpi(r.commercialAmount > 0 ? '需商贷金额' : '商贷金额', wan(r.commercialAmount), ' 万')}
-    ${kpi('首月月供', yuan(t.first), ' 元')}
     ${kpi('贷款总利息', wan(t.totalInterest), ' 万')}
+    ${kpi('本息合计', wan(t.totalPay), ' 万')}
     ${kpi('账户余额合计', yuan(r.withdraw.totalBalance), ' 元')}
     ${kpi('能提取·按本次贷款', yuan(r.withdraw.safeLimitInput), ' 元', true)}
     ${kpi('能提取·保留满贷', yuan(r.withdraw.safeLimit), ' 元')}
-    ${kpi('每月自付现金', yuan(r.cashflow.cashMonthly), ' 元')}
+    ${kpi('等额本息首月月供', yuan(mInst.first), ' 元')}
+    ${kpi('等额本金首月月供', yuan(mPrin.first), ' 元')}
   </div>
   <p class="muted" style="margin-top:8px">「能提取的余额」有两个口径：<b>按本次贷款 ${yuan(r.loanNeed)} 元</b>算（提走后仍够贷到你在表单填写的这笔）为 <b>${yuan(r.withdraw.safeLimitInput)} 元</b>；<b>保留满贷能力（上限 ${yuan(r.maxLoanGjj)} 元，含上浮）</b>算为 <b>${yuan(r.withdraw.safeLimit)} 元</b>，比前者少 ${yuan(r.withdraw.safeLimitInput - r.withdraw.safeLimit)} 元——少提那部分是为了卡住额度公式不掉出满贷上限。两者均已向下取整到「元」（余额 ×${r.withdraw.balanceMultiplier} 计入额度，请按整数操作）。</p>`;
 
@@ -685,7 +690,7 @@ function render(r) {
 
   /* ---- 方案对比 ---- */
   const rows = (r.plans && r.plans.rows) || [];
-  html += `<div class="sec-title">买房方案对比（${r.termYears} 年期 · 等额本息/本金按当前选择）</div>
+  html += `<div class="sec-title">买房方案对比（${r.termYears} 年期 · 等额本息）</div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -698,7 +703,7 @@ function render(r) {
             return `<tr class="${hl ? 'hl' : ''}">
               <td>${esc(p.label)}</td>
               <td>${wan(p.gjjAmount)} 万</td>
-              <td>${p.commercialAmount > 0 ? `${wan(p.commercialAmount)} 万<br><small>@${pct(p.commercialRate, 2)}</small>` : '—'}</td>
+              <td>${p.commercialAmount > 0 ? `${wan(p.commercialAmount)} 万` : '—'}</td>
               <td>${yuan(p.first)}</td>
               <td>${wan(p.totalInterest)} 万</td>
               <td>${wan(p.totalPay)} 万</td>
@@ -712,8 +717,6 @@ function render(r) {
 
   /* ---- 还款方式差异 + 逐年月供对照表 ---- */
   const sch = (r.schedule || []);
-  const mInst = (r.methods || []).find((x) => x.key === 'equal_installment') || {};
-  const mPrin = (r.methods || []).find((x) => x.key === 'equal_principal') || {};
   html += `<div class="sec-title">两种还款方式：月供与最终总额对比</div>
     <div class="table-wrap">
       <table>
@@ -793,7 +796,7 @@ function render(r) {
     <div class="rows">
       <div class="row"><span class="rk">实际支付的首期房款</span><span class="rv">${yuan(r.withdraw.downPayment)} 元<small>总价 ${wan(r.totalPrice)} 万 − 贷款 ${wan(r.loanNeed)} 万${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}</small></span></div>
       <div class="row"><span class="rk">${r.mode === 'couple' ? '两人' : '本人'}账户余额合计</span><span class="rv">${yuan(r.withdraw.totalBalance)} 元</span></div>
-      <div class="row hl-row"><span class="rk">能提取的余额<small>按本次贷款 ${yuan(r.loanNeed)} 元算（你在表单填写的贷款金额）</small></span><span class="rv">${yuan(r.withdraw.safeLimitInput)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalanceInput)}」三者最小值，向下取整到元</small></span></div>
+      <div class="row hl-row"><span class="rk">能提取的余额<small>按本次贷款 ${yuan(r.loanNeed)} 元算</small></span><span class="rv">${yuan(r.withdraw.safeLimitInput)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalanceInput)}」三者最小值，向下取整到元</small></span></div>
       ${r.withdraw.afterWithdrawInput ? `<div class="row"><span class="rk">提取后复核（本次）</span><span class="rv">${r.withdraw.afterWithdrawInput.stillCovers ? '✅ 仍贷得下本次' : '⚠️ 贷不满本次了'}<small>${esc(r.withdraw.afterWithdrawInput.text)}</small></span></div>` : ''}
       <div class="row"><span class="rk">能提取的余额<small>保留满贷能力（上限 ${yuan(r.maxLoanGjj)} 元，含上浮）</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>比「按本次」少提 ${yuan(r.withdraw.safeLimitInput - r.withdraw.safeLimit)} 元，用来卡住额度公式不掉出满贷上限</small></span></div>
       ${r.withdraw.afterWithdraw ? `<div class="row"><span class="rk">提取后复核（满贷）</span><span class="rv">${r.withdraw.afterWithdraw.stillCovers ? '✅ 满贷仍撑得住' : '⚠️ 撑不住满贷了'}<small>${esc(r.withdraw.afterWithdraw.text)}</small></span></div>` : ''}
@@ -803,7 +806,7 @@ function render(r) {
       <div class="row"><span class="rk">政策一次性提取上限</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>不超过实际支付的首期房款，也不超过账户余额</small></span></div>
       <div class="row"><span class="rk">该套住房提取总额上限</span><span class="rv">${yuan(r.withdraw.totalLimit)} 元<small>不超过实际支付的购房本息</small></span></div>
       <div class="row"><span class="rk">每月缴存合计</span><span class="rv">${yuan(r.cashflow.monthlyDeposit)} 元</span></div>
-      <div class="row"><span class="rk">每月自掏现金</span><span class="rv">${yuan(r.cashflow.cashMonthly)} 元</span></div>
+      <div class="row"><span class="rk">每月自掏现金（等额本息）</span><span class="rv">${yuan(r.cashflow.cashMonthly)} 元</span></div>
     </div>
     <div class="alert alert-info" style="margin-top:10px">${esc(r.cashflow.text)}</div>
     <details class="policy-src"><summary>提取规则原文要点</summary>

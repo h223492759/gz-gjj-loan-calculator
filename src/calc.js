@@ -395,6 +395,8 @@ function calculate(input) {
   const monthlyDeposit = yuan(perPerson.reduce((s, p) => s + p.monthlyDeposit, 0));
   const gjjMonthly = gjjPay.first;
   const netIntoAccount = yuan(monthlyDeposit - gjjMonthly);
+  // 现金流口径固定按等额本息首期月供估算（页面已不提供还款方式选择）
+  const methodLabel = method === 'equal_principal' ? '等额本金' : '等额本息';
   let cashflow;
   if (netIntoAccount >= 0) {
     const toBank = yuan(Math.min(netIntoAccount, commercialAmount > 0 ? commPay.first : 0));
@@ -407,7 +409,7 @@ function calculate(input) {
       transferToBank: toBank,
       cashMonthly: yuan(Math.max(0, commPay.first - toBank)),
       text: commercialAmount > 0
-        ? `每月缴存 ${monthlyDeposit} 元足以覆盖公积金月供 ${gjjMonthly} 元，剩余 ${netIntoAccount} 元中最多 ${toBank} 元每月自动转入本人银行账户用于还商贷，实际每月自掏现金约 ${yuan(Math.max(0, commPay.first - toBank))} 元。`
+        ? `每月缴存 ${monthlyDeposit} 元足以覆盖公积金月供 ${gjjMonthly} 元，剩余 ${netIntoAccount} 元中最多 ${toBank} 元每月自动转入本人银行账户用于还商贷，实际每月自掏现金约 ${yuan(Math.max(0, commPay.first - toBank))} 元（${methodLabel}）。`
         : `每月缴存 ${monthlyDeposit} 元覆盖公积金月供 ${gjjMonthly} 元后仍有结余 ${netIntoAccount} 元（可留存或用于提前还款），月供无需额外出钱。`
     };
   } else {
@@ -419,7 +421,7 @@ function calculate(input) {
       netIntoAccount,
       transferToBank: 0,
       cashMonthly: yuan(commPay.first - netIntoAccount),
-      text: `每月缴存 ${monthlyDeposit} 元不足以覆盖公积金月供 ${gjjMonthly} 元，每月需自付差额 ${Math.abs(netIntoAccount)} 元${commercialAmount > 0 ? `，加上商贷月供 ${commPay.first} 元` : ''}，合计每月现金支出约 ${yuan(commPay.first - netIntoAccount)} 元。`
+      text: `每月缴存 ${monthlyDeposit} 元不足以覆盖公积金月供 ${gjjMonthly} 元，每月需自付差额 ${Math.abs(netIntoAccount)} 元${commercialAmount > 0 ? `，加上商贷月供 ${commPay.first} 元` : ''}，合计每月现金支出约 ${yuan(commPay.first - netIntoAccount)} 元（${methodLabel}）。`
     };
   }
 
@@ -532,7 +534,7 @@ function buildPlans({ commercialRate, loanNeed, maxLoanGjj, gr, termYears, month
   // 纯商贷（极端对照：公积金一分不用），同样用当前选中的商贷利率
   rows.push({
     key: 'pure_commercial',
-    label: '纯商贷（住房公积金一分不贷）',
+    label: `纯商贷 ${rateLabel(commercialRate)}（住房公积金一分不贷）`,
     commercialRate,
     gjjAmount: 0,
     commercialAmount: loanNeed,

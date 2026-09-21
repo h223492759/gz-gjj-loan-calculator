@@ -457,8 +457,11 @@ table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 13p
 th, td { padding: 9px 11px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { font-weight: 600; color: var(--muted); font-size: 12px; background: var(--card-2); }
 th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 130px; }
-/* 多行表头：第二行的第一个 th 是数据列（如「月供」），不套行首列的左对齐/最小宽，跟数字列一起右对齐 */
-thead tr:last-child th:first-child { text-align: right; min-width: 0; white-space: nowrap; }
+/* 多行表头（仅逐年月供表 .sch）：第二行的第一个 th 是数据列（如「月供」），
+   不套行首列的左对齐/最小宽，跟数字列一起右对齐。
+   ⚠️ 只限 .sch —— 单行表头的表（方案对比 / 还款方式对比）第一个 th 是
+   行首标签列，若也被右对齐就会跟下方左对齐的单元格错位（2026-09-21 用户实测）。 */
+table.sch thead tr:last-child th:first-child { text-align: right; min-width: 0; white-space: nowrap; }
 /* 分组表头（等额本息 / 等额本金）居中压在各自三列上方 */
 thead tr:first-child th[colspan] { text-align: center; }
 /* 逐年月供对照表：紧凑排版，窄屏不横向滚动 */
