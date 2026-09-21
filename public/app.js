@@ -742,12 +742,12 @@ function render(r) {
         <thead>
           <tr>
             <th rowspan="2">年度</th>
-            <th colspan="3">等额本息</th>
-            <th colspan="3">等额本金</th>
+            <th colspan="4">等额本息</th>
+            <th colspan="4">等额本金</th>
           </tr>
           <tr>
-            <th>月供</th><th class="c-yearpay">当年还款</th><th>年末剩余本金</th>
-            <th>月供（首 → 末）</th><th class="c-yearpay">当年还款</th><th>年末剩余本金</th>
+            <th>月供</th><th class="c-yearpay">当年还款</th><th>每月实付</th><th class="c-endbal">年末剩余本金</th>
+            <th>月供（首 → 末）</th><th class="c-yearpay">当年还款</th><th>每月实付（首 → 末）</th><th class="c-endbal">年末剩余本金</th>
           </tr>
         </thead>
         <tbody>
@@ -755,10 +755,12 @@ function render(r) {
             <td>第 ${row.year} 年<small>${row.monthCount} 期</small></td>
             <td>${yuan(row.installment.first)}</td>
             <td class="c-yearpay">${yuan(row.installment.yearPay)}</td>
-            <td>${yuan(row.installment.endBalance)}</td>
+            <td>${yuan(row.installment.cashFirst)}${row.installment.cashFirst !== row.installment.cashLast ? `<small>→ ${yuan(row.installment.cashLast)}</small>` : ''}</td>
+            <td class="c-endbal">${yuan(row.installment.endBalance)}</td>
             <td>${yuan(row.principal.first)}<small>→ ${yuan(row.principal.last)}</small></td>
             <td class="c-yearpay">${yuan(row.principal.yearPay)}</td>
-            <td>${yuan(row.principal.endBalance)}</td>
+            <td>${yuan(row.principal.cashFirst)}${row.principal.cashFirst !== row.principal.cashLast ? `<small>→ ${yuan(row.principal.cashLast)}</small>` : ''}</td>
+            <td class="c-endbal">${yuan(row.principal.endBalance)}</td>
           </tr>`).join('')}
         </tbody>
         <tfoot>
@@ -766,16 +768,23 @@ function render(r) {
             <td>合计</td>
             <td>—</td>
             <td class="c-yearpay">—</td>
-            <td>${yuan(mInst.totalPay || 0)}<small>利息 ${wan(mInst.totalInterest || 0)} 万</small></td>
+            <td>${yuan((r.scheduleCash || {}).totalCashInstallment || 0)}<small>实付合计</small></td>
+            <td class="c-endbal">${yuan(mInst.totalPay || 0)}<small>利息 ${wan(mInst.totalInterest || 0)} 万</small></td>
             <td>—</td>
             <td class="c-yearpay">—</td>
-            <td>${yuan(mPrin.totalPay || 0)}<small>利息 ${wan(mPrin.totalInterest || 0)} 万</small></td>
+            <td>${yuan((r.scheduleCash || {}).totalCashPrincipal || 0)}<small>实付合计</small></td>
+            <td class="c-endbal">${yuan(mPrin.totalPay || 0)}<small>利息 ${wan(mPrin.totalInterest || 0)} 万</small></td>
           </tr>
         </tfoot>
       </table>
     </div>
     <p class="swipe-hint">← 表格可左右滑动 →</p>
-    <p class="muted" style="margin-top:8px">等额本息每月 ${yuan(mInst.monthly || 0)} 元始终不变，前期还的多是利息；等额本金首月 ${yuan(mPrin.first || 0)} 元、每月递减到末月 ${yuan(mPrin.last || 0)} 元，总利息更少但前期压力大。</p>`;
+    <p class="muted" style="margin-top:8px">等额本息每月 ${yuan(mInst.monthly || 0)} 元始终不变，前期还的多是利息；等额本金首月 ${yuan(mPrin.first || 0)} 元、每月递减到末月 ${yuan(mPrin.last || 0)} 元，总利息更少但前期压力大。</p>
+    <p class="muted">「每月实付」= 月供先扣公积金账户（期初 ${yuan((r.scheduleCash || {}).acc0 || 0)} 元 + 每月缴存 ${yuan((r.scheduleCash || {}).monthlyDeposit || 0)} 元）之后，剩下要从银行卡拿的现金。${
+      (r.scheduleCash || {}).emptyYear
+        ? `账户在第 ${r.scheduleCash.emptyYear} 年被扣空，此后每月实付 = 月供 − 缴存 ${yuan((r.scheduleCash || {}).monthlyDeposit || 0)} 元；第 ${r.scheduleCash.emptyYear} 年之前则一分现金不用出。`
+        : '按当前缴存与账户余额，整段还款期内账户都够扣，每月实付为 0（未考虑缴存调整、断缴等情形）。'
+    }假设已提取「能提取的余额」、且办理了公积金委托扣款。</p>`;
   }
 
   /* ---- 提取与现金流 ---- */

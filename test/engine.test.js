@@ -552,6 +552,38 @@ it('逐年月供对照表：最多 30 行，末期归零，逐年累加等于总
   assert.strictEqual(last.monthCount, 12);
 });
 
+it('逐年月供表新增「每月实付」：先扣公积金账户，账户扣空之后才从银行卡拿现金', () => {
+  const r = calculate({
+    ...base,
+    persons: [
+      { label: 'A', birth: '1992-06', category: 'male', balance: 60000, monthlyDeposit: 1200 },
+      { label: 'B', birth: '1994-03', category: 'female_manager', balance: 40000, monthlyDeposit: 900 }
+    ],
+    loanNeed: 2000000, houseTotalPrice: 0, downRatio: 20, termYears: 30
+  });
+  const c = r.scheduleCash;
+  assert.ok(c, '应给出公积金账户的逐月模拟结果');
+  assert.ok(c.acc0 > 0, `期初账户余额 ${c.acc0} 应按「提取后留在账户里的钱」起算`);
+  assert.strictEqual(c.monthlyDeposit, 2100, '每月缴存合计 = 两人之和');
+
+  // 前期账户里有钱 → 一分现金不出
+  assert.strictEqual(r.schedule[0].installment.cashFirst, 0, '第一年账户够扣，不该掏现金');
+  assert.strictEqual(r.schedule[0].principal.cashFirst, 0);
+  // 账户一定会在某一年被扣空（月供远大于缴存）
+  assert.ok(c.emptyYear >= 1, `账户应在第 ${c.emptyYear} 年被扣空`);
+  // 扣空之后：每月实付 = 月供 − 缴存
+  const last = r.schedule[r.schedule.length - 1];
+  assert.ok(last.installment.cashFirst > 0, '账户扣空后每月应有现金支出');
+  assert.ok(near(last.installment.cashFirst, last.installment.first - c.monthlyDeposit, 1.5),
+    `实付 ${last.installment.cashFirst} 应 ≈ 月供 ${last.installment.first} − 缴存 ${c.monthlyDeposit}`);
+  // 实付不可能超过应还，且账户替你出钱 → 实付合计必然小于总还款
+  assert.ok(c.totalCashInstallment < r.methods.find((m) => m.key === 'equal_installment').totalPay);
+  assert.ok(c.totalCashPrincipal < r.methods.find((m) => m.key === 'equal_principal').totalPay);
+  // 每年「实付」之和 = 实付合计
+  const sumCash = r.schedule.reduce((s, x) => s + x.installment.yearCash, 0);
+  assert.ok(near(sumCash, c.totalCashInstallment, 0.1), `逐年实付合计 ${sumCash} ≈ ${c.totalCashInstallment}`);
+});
+
 /* ------------------------------ 执行 ------------------------------ */
 
 let failed = 0;

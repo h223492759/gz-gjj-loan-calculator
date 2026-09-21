@@ -426,9 +426,13 @@ function calculate(input) {
   const plans = buildPlans({
     rates, loanNeed, maxLoanGjj, gr, termYears, months, method, cfg
   });
-  const schedule = buildSchedule({
-    gjjAmount, commercialAmount, gjjRate: gr.rate, commRate: commercialRate, months
+  // 期初公积金账户余额按「上面建议提取后留在账户里的钱」起算
+  const sched = buildSchedule({
+    gjjAmount, commercialAmount, gjjRate: gr.rate, commRate: commercialRate, months,
+    acc0: withdraw ? withdraw.keepBalance : 0,
+    monthlyDeposit
   });
+  const schedule = sched.rows;
   const methods = buildMethods({ gjjAmount, commercialAmount, gr, commercialRate, months, cfg });
 
   /* ---------------- 12. 参数时效 ---------------- */
@@ -483,6 +487,7 @@ function calculate(input) {
     plans,
     methods,
     schedule,
+    scheduleCash: sched.cash,
     termChecks: byAge,
     warnings,
     notes,
@@ -558,11 +563,19 @@ function fixedMonthly(P, i, months) {
 /**
  * 逐年月供对照表（公积金 + 商贷合并为一笔现金流）
  * 把等额本息与等额本金放在同一张表里：每年一行，最多 30 行。
- * 行字段：该年月供（首/末）、全年还款、全年利息、年末剩余本金。
+ * 行字段：该年月供（首/末）、全年还款、全年利息、年末剩余本金，
+ * 以及「扣掉公积金账户之后每月实付多少」（首/末）+ 全年实付 + 年末账户余额。
+ *
+ * 扣款顺序（广州委托扣款口径）：
+ *   每月先从公积金账户扣（期初账户余额 + 当月缴存），账户不够了才从绑定的银行卡拿现金。
+ *   所以还款初期往往是「一分现金不出」，等账户被扣空之后才开始真正掏钱。
  */
-function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months }) {
+function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months, acc0, monthlyDeposit }) {
   const rows = [];
-  if (!(months > 0) || !(gjjAmount + commercialAmount > 0)) return rows;
+  if (!(months > 0) || !(gjjAmount + commercialAmount > 0)) return { rows, cash: null };
+
+  const accStart = Math.max(0, Number(acc0) || 0);
+  const dep = Math.max(0, Number(monthlyDeposit) || 0);
 
   const seriesFor = (method) => {
     const iG = gjjRate / 12;
@@ -575,6 +588,8 @@ function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months 
 
     let balG = gjjAmount;
     let balC = commercialAmount;
+    let acc = accStart;          // 公积金账户余额（可被扣来还月供的那部分）
+    let emptyAt = 0;             // 账户第一次被扣空的月份
     const monthsRows = [];
     for (let k = 1; k <= months; k++) {
       const intG = balG * iG;
@@ -585,7 +600,15 @@ function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months 
       const cutC = payC - intC;
       balG = Math.max(0, balG - cutG);
       balC = Math.max(0, balC - cutC);
-      monthsRows.push({ pay: payG + payC, interest: intG + intC, bal: balG + balC });
+
+      const due = payG + payC;                 // 这个月银行要收的
+      acc = yuan(acc + dep);                   // 当月缴存进账
+      const use = yuan(Math.min(acc, due));    // 先从公积金账户扣
+      acc = yuan(acc - use);
+      const cash = yuan(Math.max(0, due - use));  // 不够的部分才是银行卡现金
+      if (!emptyAt && acc <= 0.005 && dep < due) emptyAt = k;
+
+      monthsRows.push({ pay: due, interest: intG + intC, bal: balG + balC, use, cash, acc });
     }
 
     const years = Math.ceil(months / 12);
@@ -598,23 +621,37 @@ function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months 
         last: yuan(slice[slice.length - 1].pay),
         yearPay: yuan(slice.reduce((s, x) => s + x.pay, 0)),
         interest: yuan(slice.reduce((s, x) => s + x.interest, 0)),
-        endBalance: yuan(Math.abs(slice[slice.length - 1].bal) < 0.01 ? 0 : slice[slice.length - 1].bal)
+        endBalance: yuan(Math.abs(slice[slice.length - 1].bal) < 0.01 ? 0 : slice[slice.length - 1].bal),
+        // 扣掉公积金账户之后，每月真正从银行卡出去的钱
+        cashFirst: yuan(slice[0].cash),
+        cashLast: yuan(slice[slice.length - 1].cash),
+        yearCash: yuan(slice.reduce((s, x) => s + x.cash, 0)),
+        endAccount: yuan(slice[slice.length - 1].acc)
       });
     }
-    return out;
+    return { out, emptyAt, totalCash: yuan(monthsRows.reduce((s, x) => s + x.cash, 0)) };
   };
 
   const inst = seriesFor('equal_installment');
   const prin = seriesFor('equal_principal');
-  inst.forEach((r, i) => {
+  inst.out.forEach((r, i) => {
     rows.push({
       year: i + 1,
       monthCount: Math.min(12, months - i * 12),
       installment: r,
-      principal: prin[i]
+      principal: prin.out[i]
     });
   });
-  return rows;
+
+  const cash = {
+    acc0: yuan(accStart),
+    monthlyDeposit: yuan(dep),
+    emptyMonth: inst.emptyAt,
+    emptyYear: inst.emptyAt ? Math.ceil(inst.emptyAt / 12) : 0,
+    totalCashInstallment: inst.totalCash,
+    totalCashPrincipal: prin.totalCash
+  };
+  return { rows, cash };
 }
 
 /** 同一笔贷款下，等额本息 vs 等额本金 */
