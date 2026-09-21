@@ -1,18 +1,20 @@
 name: Build and Push Image
 
-# 推 tag（或手动触发）时自动：
+# 往 main 推一次代码（或手动触发）就自动跑完全程，不需要任何人在 GitHub 网页上点按钮：
 #   1) 跑测算引擎断言 + 访问门禁断言（纯 Node，无需装依赖）
 #   2) 用【空数据卷】跑真容器做全新部署冒烟，冻结「NAS 首次 docker compose up」场景，
 #      并覆盖访问密码全链路：未登录 401 → 错密码 401 → 随机密码登录 → 改密码后旧通行证失效
 #   3) 构建 amd64 + arm64 镜像并推送到 GHCR（配了 Docker Hub Secrets 时同时推 Docker Hub）
-#   4) 同步创建 / 更新 GitHub Release，释放出本次发布版本号
+#   4) 由 CI 自己创建 / 更新 GitHub Release —— 发布版本号就在 Release 标题上
+#
+# 发布版本号 = 本次构建的北京时间 vYYMMDD-HHMM，由上一步在 CI 内部算出，
+# 不需要人工打 tag（因此永远不会出现「忘了打 tag」而漏发布的情况）。
 #
 # 可选 Secrets（不配也能跑，只是不推 Docker Hub）：
 #   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
 
 on:
   push:
-    tags: ['v*']
     branches: [main]
   workflow_dispatch:
 
@@ -22,6 +24,13 @@ permissions:
 
 env:
   IMAGE_NAME: gz-gjj-loan-calculator
+  # 冒烟脚本要在容器日志、HTML 里匹配中文。Runner 默认 locale 是 C，
+  # GNU grep 会把含高位字节的输入判定为「二进制文件」，只往 stderr 吐
+  # "Binary file ... matches"、stdout 为空、退出码却是 0 —— 断言会静默失败。
+  # 统一指定 UTF-8 locale，配合下面的 python3 解析双保险。
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PYTHONIOENCODING: utf-8
 
 jobs:
   test:
@@ -88,6 +97,14 @@ jobs:
 
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
+          # 从含中文的文本（容器日志 / INITIAL-PASSWORD.txt）里抓「访问密码」。
+          # 走 python3 显式按 UTF-8 解码，绕开 locale 与「二进制文件」判定。
+          # 正则用 \uXXXX 转义写成纯 ASCII，避免中文在 YAML → shell → python
+          # 这条链路上被任何一层改写；[:\uff1a] 同时兼容全角与半角冒号。
+          pw_from() {
+            python3 -c 'import re,sys;t=sys.stdin.buffer.read().decode("utf-8","replace");m=re.search("\u8bbf\u95ee\u5bc6\u7801\\s*[:\uff1a]\\s*([A-Za-z0-9]{6,})",t);sys.stdout.write(m.group(1) if m else "")'
+          }
+
           echo "=== 首次启动（不设 ACCESS_PASSWORD，走「自动生成随机密码」路径）==="
           start
           wait_health
@@ -108,9 +125,16 @@ jobs:
           curl -sf $B/app.js >/dev/null && curl -sf $B/style.css >/dev/null && echo "静态资源 OK"
 
           echo "=== 用容器日志里自动生成的密码登录 ==="
-          PW=$(docker logs gzgjj-smoke 2>&1 | grep -o '访问密码：[A-Za-z0-9]*' | head -1 | sed 's/访问密码：//')
-          [ -n "$PW" ] || { echo "❌ 未从日志里读到自动生成的密码"; exit 1; }
+          docker logs gzgjj-smoke > /tmp/gzgjj-boot.log 2>&1
+          PW=$(pw_from < /tmp/gzgjj-boot.log)
+          [ -n "$PW" ] || { echo "❌ 未从日志里读到自动生成的密码"; cat /tmp/gzgjj-boot.log; exit 1; }
           echo "取到自动生成的密码（长度 ${#PW}）"
+          # 交叉验证：日志里公示的那串，必须与落盘的 INITIAL-PASSWORD.txt 一致，
+          # 否则「照着日志输密码却进不去」这类问题会在用户现场才暴露。
+          FILEPW=$(docker exec gzgjj-smoke cat /app/data/INITIAL-PASSWORD.txt | pw_from)
+          [ "$FILEPW" = "$PW" ] \
+            || { echo "❌ 日志公示的密码与 INITIAL-PASSWORD.txt 不一致（日志=$PW 文件=$FILEPW）"; exit 1; }
+          echo "日志与落盘文件一致 OK"
           curl -sf -c "$COOKIE" -X POST -H 'Content-Type: application/json' \
             -d "{\"password\":\"$PW\"}" $B/api/auth/login \
             | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["ok"], d;print("登录 OK, 有效期至", d["expiresAt"])'
@@ -178,7 +202,7 @@ jobs:
             | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["password"]["algo"]=="scrypt";assert "ci-pass-2026" not in json.dumps(d);print("auth.json 哈希存储 OK")'
 
           echo "=== 首页与静态资源 ==="
-          curl -sf $B/ | grep -q "广州公积金买房贷款测算器" && echo "首页 OK"
+          curl -sf $B/ | grep -qa "广州公积金买房贷款测算器" && echo "首页 OK"
           curl -sf $B/app.js >/dev/null && echo "静态资源 OK"
           curl -sf -b "$COOKIE" -X DELETE "$B/api/records/$ID" >/dev/null && echo "删除 OK"
           curl -sf -b "$COOKIE" $B/api/records \

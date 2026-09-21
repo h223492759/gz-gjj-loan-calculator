@@ -236,7 +236,7 @@ it('未登录请求一律 401，且不泄漏任何业务数据', () => {
   try {
     ctx.mod.init();
     const calls = [];
-    const req = { headers: {}, socket: { remoteAddress: '10.0.0.9' }, path: '/api/records' };
+    const req = { headers: {}, socket: { remoteAddress: '192.0.2.9' }, path: '/api/records' };
     const res = {
       status(code) { calls.push(['status', code]); return this; },
       json(body) { calls.push(['json', body]); return this; }
@@ -259,7 +259,7 @@ it('带合法 Cookie 的请求可以放行', () => {
     const { token } = issueToken(false);
     const req = {
       headers: { cookie: `gzgjj-theme=dark; gzgjj_auth=${token}; other=1` },
-      socket: { remoteAddress: '10.0.0.9' },
+      socket: { remoteAddress: '192.0.2.9' },
       path: '/api/records'
     };
     let nexted = false;
@@ -285,7 +285,7 @@ it('/api/health 与 /api/auth/* 之外的接口全部挂门禁', () => {
       let status = 0;
       let nexted = false;
       guard(
-        { path: p, headers: {}, socket: { remoteAddress: '10.0.0.1' } },
+        { path: p, headers: {}, socket: { remoteAddress: '192.0.2.1' } },
         { status(c) { status = c; return this; }, json() { return this; } },
         () => { nexted = true; }
       );
@@ -325,27 +325,27 @@ it('连续输错会临时锁定，正确密码也暂时不放行', () => {
     // 第 1、2 次错：401 且提示还剩几次
     for (let i = 0; i < 2; i += 1) {
       const { out, res } = mk();
-      ctx.mod.loginHandler({ body: { password: 'wrong' }, headers: {}, socket: { remoteAddress: '10.9.9.9' } }, res);
+      ctx.mod.loginHandler({ body: { password: 'wrong' }, headers: {}, socket: { remoteAddress: '192.0.2.99' } }, res);
       assert.strictEqual(out.status, 401, `第 ${i + 1} 次错误应是 401`);
     }
     // 第 3 次错：触发锁定
     {
       const { out, res } = mk();
-      ctx.mod.loginHandler({ body: { password: 'wrong' }, headers: {}, socket: { remoteAddress: '10.9.9.9' } }, res);
+      ctx.mod.loginHandler({ body: { password: 'wrong' }, headers: {}, socket: { remoteAddress: '192.0.2.99' } }, res);
       assert.strictEqual(out.status, 401);
       assert.ok(/锁定|秒后再试/.test(out.body.error), `应提示锁定，实际：${out.body.error}`);
     }
     // 锁定期间：即使密码正确也 429
     {
       const { out, res } = mk();
-      ctx.mod.loginHandler({ body: { password: 'lock-test' }, headers: {}, socket: { remoteAddress: '10.9.9.9' } }, res);
+      ctx.mod.loginHandler({ body: { password: 'lock-test' }, headers: {}, socket: { remoteAddress: '192.0.2.99' } }, res);
       assert.strictEqual(out.status, 429, '锁定期间应返回 429');
       assert.ok(out.cookies.length === 0, '锁定期间不能发通行证');
     }
     // 换一个 IP 不受影响
     {
       const { out, res } = mk();
-      ctx.mod.loginHandler({ body: { password: 'lock-test' }, headers: {}, socket: { remoteAddress: '10.1.1.1' } }, res);
+      ctx.mod.loginHandler({ body: { password: 'lock-test' }, headers: {}, socket: { remoteAddress: '192.0.2.11' } }, res);
       assert.strictEqual(out.status, 200, '别的 IP 不该被牵连');
       assert.strictEqual(out.cookies.length, 1, '应下发通行证 Cookie');
       assert.ok(out.cookies[0][1], 'Cookie 值不应为空');
@@ -367,7 +367,7 @@ it('密码正确时下发 HttpOnly 通行证；退出登录会清掉它', () => 
     };
 
     ctx.mod.loginHandler(
-      { body: { password: 'cookie-test', remember: true }, headers: {}, socket: { remoteAddress: '10.2.2.2' } },
+      { body: { password: 'cookie-test', remember: true }, headers: {}, socket: { remoteAddress: '192.0.2.22' } },
       res
     );
     assert.strictEqual(cookies.length, 1);
@@ -376,7 +376,7 @@ it('密码正确时下发 HttpOnly 通行证；退出登录会清掉它', () => 
     assert.strictEqual(cookies[0].opts.sameSite, 'lax');
     assert.ok(cookies[0].opts.maxAge > 20 * 86400e3, '勾了记住设备应接近 30 天');
 
-    ctx.mod.logoutHandler({ headers: {}, socket: { remoteAddress: '10.2.2.2' } }, res);
+    ctx.mod.logoutHandler({ headers: {}, socket: { remoteAddress: '192.0.2.22' } }, res);
     assert.strictEqual(cleared.length, 1);
     assert.strictEqual(cleared[0].n, 'gzgjj_auth');
   } finally { ctx.cleanup(); }

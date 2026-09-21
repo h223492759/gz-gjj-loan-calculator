@@ -85,6 +85,22 @@ cd gz-gjj-loan-calculator
 docker compose up -d
 ```
 
+### 升级到新版本
+
+发布是全自动的，**不需要在 GitHub 网页上点任何按钮，也不需要人工打 tag**：
+
+> 往 `main` 推一次代码 → GitHub Actions 依次跑「测算引擎断言 + 访问门禁断言 → 空数据卷全新部署冒烟 → 构建 amd64/arm64 镜像并推送 → 自动创建 Release」。
+> 发布版本号 = **本次构建的北京时间 `vYYMMDD-HHMM`**，由 CI 内部算出，直接写在 Release 标题和镜像 tag 上。
+
+NAS 上升级：
+
+```bash
+cd <你的 compose 目录>
+docker compose pull && docker compose up -d     # 数据在 ./data，不会丢
+```
+
+或在飞牛的「Docker → 项目」里对该项目点一下「重新部署 / 更新」即可。升级后网页右上角能看到新的版本号，用它核对是否已生效。
+
 ### 访问密码怎么定 / 怎么改
 
 | 场景 | 做法 | 结果 |
