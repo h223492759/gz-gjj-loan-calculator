@@ -211,6 +211,9 @@ function calculate(input) {
       : loanNeed / Math.max(1 - (downRatio != null ? downRatio : minDownRatio), 0.05);
     if (downRatio == null) downRatio = minDownRatio;
   }
+  if (downAmountIn != null && priceGiven && Math.abs(totalPrice - loanNeed - downAmountIn) > 1) {
+    warnings.push(`贷款 ${yuan(loanNeed).toLocaleString('zh-CN')} 元 + 首付金额 ${yuan(downAmountIn).toLocaleString('zh-CN')} 元 ≠ 购房总价 ${yuan(totalPrice).toLocaleString('zh-CN')} 元（相差 ${yuan(Math.abs(totalPrice - loanNeed - downAmountIn)).toLocaleString('zh-CN')} 元），已按「首付 = 总价 − 贷款」口径计算。`);
+  }
   if (downRatio < minDownRatio - 1e-9) {
     warnings.push(`首付比例 ${(downRatio * 100).toFixed(1)}% 低于现行最低 ${(minDownRatio * 100).toFixed(0)}%，政策口径下不成立。`);
   }

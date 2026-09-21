@@ -366,14 +366,16 @@ function collect() {
 
   const ratioVal = num($('#downRatio').value);
   const amountWan = num($('#downAmount').value);
+  const isAmount = state.downMode === 'amount';
   return {
     mode: state.mode,
     persons,
     loanNeed: num($('#loanNeed').value) * 10000,
     houseTotalPrice: num($('#houseTotalPrice').value) * 10000,
-    downMode: state.downMode === 'amount' ? 'amount' : 'ratio',
-    downRatio: ratioVal > 0 ? ratioVal : null,
-    downAmount: amountWan > 0 ? Math.round(amountWan * 10000) : null,
+    downMode: isAmount ? 'amount' : 'ratio',
+    // 只发当前模式的值：隐藏框的残留值绝不上送（引擎里 downAmount 优先级高于 downRatio）
+    downRatio: !isAmount && ratioVal > 0 ? ratioVal : null,
+    downAmount: isAmount && amountWan > 0 ? Math.round(amountWan * 10000) : null,
     loanType: state.loanType,
     termYears: num($('#termYears').value) || 30,
     childPolicy: $('#childPolicy').value,
@@ -463,17 +465,17 @@ function mirrorDown() {
 
 /**
  * 锁二算一：需要贷款金额 / 购房总价 / 首付 三组输入，任意手填两组，第三组自动算
- * （灰色 auto，可直接改）。联动规则按用户意图定优先级：
- *   · 贷款金额 = 意图锚点，最后才让位（改首付/总价优先互相让位）；
- *   · 购房总价 = 市场事实，仅在手填首付与贷款冲突时让位给「贷款+首付」反推；
- *   · 首付 = 默认让位变量（改贷款或总价都重算它）。
- * 每次同步把「比例 ⇄ 金额」两个框一齐写齐，不留过期值。
+ * （灰色 auto，可直接改）。三条铁律（2026-09-21 修「输入被劫持」bug 后定死）：
+ *   1. 联动只在「提交」时机发生（change = 失焦/回车），打字过程绝不回写任何框——
+ *      否则半截输入（如比例刚敲 "2"）会被拿去算出垃圾值顶进别的框；
+ *   2. 正在提交的组（src）绝不被程序回写；程序只写 auto/空白的字段，
+ *      手填过的事实一律不动（矛盾交给引擎校验提示）；
+ *   3. 提交空值（用户删除内容）→ 连带清掉所有 auto 派生值，不留过期垃圾。
+ * 意图优先级：改首付/总价时贷款是锚点（只在它还是 auto 时才被反推）。
  */
 function syncDownLink(src) {
   const loan = $('#loanNeed'), price = $('#houseTotalPrice');
   const ratioEl = $('#downRatio'), amountEl = $('#downAmount');
-  [loan, price, ratioEl, amountEl].forEach((el) => el.classList.remove('auto'));
-
   const L = num(loan.value);      // 万
   const P = num(price.value);     // 万
   const r = num(ratioEl.value);   // %
@@ -483,7 +485,20 @@ function syncDownLink(src) {
   const downKnown = r > 0 || a > 0;
   const isAutoOrEmpty = (el) => el.classList.contains('auto') || !(num(el.value) > 0);
 
-  // 写首付（金额+比例两个框一齐），或反推总价 / 贷款
+  // 铁律 3：提交空值 → 清掉所有 auto 派生值（源头没了，派生的都是垃圾）
+  const srcVal = src === 'loan' ? L : src === 'price' ? P : (state.downMode === 'amount' ? a : r);
+  if (!(srcVal > 0)) {
+    [loan, price, ratioEl, amountEl].forEach((el) => {
+      if (el.classList.contains('auto')) { el.value = ''; el.classList.remove('auto'); }
+    });
+    return;
+  }
+
+  // 只解除 src 自己组的 auto 标记（用户接管了它），别组的标记是判断依据，不能清
+  if (src === 'loan') loan.classList.remove('auto');
+  else if (src === 'price') price.classList.remove('auto');
+
+  // 写首付（金额+比例两个框一齐，都标 auto）——绝不在 src==='down' 时调用
   const writeDown = (amtWan, totalWan) => {
     if (!(amtWan > 0) || !(totalWan > 0) || amtWan >= totalWan) return;
     amountEl.value = r2(amtWan);
@@ -491,15 +506,14 @@ function syncDownLink(src) {
     amountEl.classList.add('auto');
     ratioEl.classList.add('auto');
   };
+  // 反推总价（只写总价框，不动首付——src==='down' 时首付刚被用户提交）
   const derivePrice = () => {
     let v = 0;
     if (a > 0) v = L + a;
     else if (r > 0 && r < 100) v = L / (1 - r / 100);
-    if (v > 0) {
-      price.value = r2(v); price.classList.add('auto');
-      writeDown(a > 0 ? a : v - L, v);
-    }
+    if (v > 0) { price.value = r2(v); price.classList.add('auto'); }
   };
+  // 反推贷款（只写贷款框）
   const deriveLoan = () => {
     let v = 0;
     if (a > 0) v = P - a;
@@ -510,15 +524,23 @@ function syncDownLink(src) {
   if (src === 'loan' && L > 0) {
     if (isAutoOrEmpty(ratioEl) && isAutoOrEmpty(amountEl) && P > 0) writeDown(P - L, P);
     else if (isAutoOrEmpty(price) && downKnown) derivePrice();
-    else if (P > 0) writeDown(P - L, P); // 总价与首付都手填过 → 首付让位（总价是事实）
+    // 总价与首付都手填 → 不动（用户意志优先，矛盾交给引擎校验提示）
   } else if (src === 'price' && P > 0) {
     if (isAutoOrEmpty(ratioEl) && isAutoOrEmpty(amountEl) && L > 0) writeDown(P - L, P);
     else if (isAutoOrEmpty(loan) && downKnown) deriveLoan();
-    else if (L > 0) writeDown(P - L, P);
+    // 贷款或首付手填 → 绝不顶掉手填值
   } else if (src === 'down' && downKnown) {
+    // 同步兄弟框的 auto 镜像（change 时已失焦，不能拿 activeElement 判断）
+    const sibling = state.downMode === 'amount' ? ratioEl : amountEl;
+    if (P > 0 && sibling.classList.contains('auto')) {
+      if (state.downMode === 'amount') sibling.value = pctOf(a, P);
+      else sibling.value = r2(P * r / 100);
+    }
+    ratioEl.classList.remove('auto');
+    amountEl.classList.remove('auto');
     if (isAutoOrEmpty(price) && L > 0) derivePrice();
     else if (isAutoOrEmpty(loan) && P > 0) deriveLoan();
-    else if (L > 0) derivePrice(); // 贷款是意图锚点 → 让总价反推
+    // 总价与贷款都手填 → 什么都不做：用户改首付就是覆盖首付本身，绝不动别的框
   }
 }
 
@@ -1478,11 +1500,11 @@ function bindEvents() {
     setDownMode(b.dataset.dmode);
     updateDownHint();
   }));
-  // 锁二算一联动：贷款 / 总价 / 首付 任手填两组，第三组自动算
-  $('#loanNeed').addEventListener('input', () => syncDownLink('loan'));
-  $('#houseTotalPrice').addEventListener('input', () => syncDownLink('price'));
-  $('#downRatio').addEventListener('input', () => syncDownLink('down'));
-  $('#downAmount').addEventListener('input', () => syncDownLink('down'));
+  // 锁二算一联动：只在「提交」时机（change = 失焦/回车）触发，打字过程绝不回写
+  $('#loanNeed').addEventListener('change', () => syncDownLink('loan'));
+  $('#houseTotalPrice').addEventListener('change', () => syncDownLink('price'));
+  $('#downRatio').addEventListener('change', () => syncDownLink('down'));
+  $('#downAmount').addEventListener('change', () => syncDownLink('down'));
 
   $('#addRateBtn').addEventListener('click', () => {
     const v = num($('#customRate').value);
