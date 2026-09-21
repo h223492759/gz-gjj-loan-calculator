@@ -1,0 +1,26 @@
+{
+  "name": "gz-gjj-loan-calculator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "广州住房公积金买房贷款测算器 —— 自托管、完全离线、数据仅保存在本地",
+  "license": "MIT",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/engine.test.js && node test/auth.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "guangzhou",
+    "provident-fund",
+    "公积金",
+    "房贷计算器",
+    "self-hosted"
+  ],
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  }
+}

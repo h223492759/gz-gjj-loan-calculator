@@ -1,0 +1,17 @@
+node_modules/
+data/*
+!data/.gitkeep
+data-test/
+data-preview/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.env
+.idea/
+.vscode/

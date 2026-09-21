@@ -1,0 +1,158 @@
+{
+  "$comment": "广州住房公积金贷款政策参数。所有数值均来自官方公开文件，sources 中逐条给出出处链接。修改参数请同时更新 as_of。",
+  "city": "广州",
+  "city_en": "Guangzhou",
+  "as_of": "2026-09-21",
+  "policy_effective": "2026-06-09",
+  "stale_after_days": 365,
+  "sources": [
+    {
+      "name": "《个人住房公积金贷款服务指南（普通公积金贷款）》",
+      "publisher": "广州住房公积金管理中心",
+      "date": "2026-06-08",
+      "url": "https://gjj.gz.gov.cn/bsfw/qtfw/content/post_5748060.html"
+    },
+    {
+      "name": "《广州住房公积金个人住房贷款实施办法》",
+      "publisher": "广州住房公积金管理中心",
+      "date": "2026-06-09 起施行",
+      "url": "https://gjj.gz.gov.cn/"
+    },
+    {
+      "name": "穗公积金中心规字〔2026〕1号：关于调整住房公积金贷款政策的通知（额度 80/160 万 → 100/200 万，引入「好房子」上浮）",
+      "publisher": "广州住房公积金管理中心 / 广州市人民政府",
+      "date": "2026-04-30 施行，有效期 5 年",
+      "url": "https://gjj.gz.gov.cn/"
+    },
+    {
+      "name": "《广州市住房公积金提取管理办法》（穗公积金中心规字〔2023〕5号）及提取服务指南",
+      "publisher": "广州住房公积金管理中心",
+      "date": "2026-03-04 更新",
+      "url": "https://gjj.gz.gov.cn/xxgk/xxgkml/bszn/content/post_5672053.html"
+    },
+    {
+      "name": "全国人民代表大会常务委员会《关于实施渐进式延迟法定退休年龄的决定》及所附对照表",
+      "publisher": "全国人大常委会",
+      "date": "2024-09-13 通过，2025-01-01 施行",
+      "url": "https://www.gov.cn/yaowen/liebiao/202409/content_6974294.htm"
+    }
+  ],
+  "loan": {
+    "base_cap": {
+      "single": 1000000,
+      "couple": 2000000,
+      "note": "一人申请 100 万元；两人及以上共同申请 200 万元。不区分首套/二套。"
+    },
+    "balance_multiplier": 10,
+    "balance_multiplier_note": "2026-06-09 新办法由 8 倍提高到 10 倍。",
+    "child_uplift": {
+      "none": 0,
+      "one": 0.1,
+      "two": 0.4,
+      "three_plus": 0.5,
+      "labels": {
+        "none": "无",
+        "one": "一孩家庭",
+        "two": "二孩家庭",
+        "three_plus": "三孩及以上家庭"
+      },
+      "note": "一孩 +10%（110/220 万）；二孩 +40%（140/280 万）；三孩及以上 +50%（150/300 万）。"
+    },
+    "quality_uplift": {
+      "none": 0,
+      "prefab_or_1star": 0.1,
+      "two_star_plus": 0.2,
+      "good_house": 0.3,
+      "labels": {
+        "none": "无",
+        "prefab_or_1star": "装配式建筑 / 一星级绿色建筑",
+        "two_star_plus": "二星级及以上绿色建筑",
+        "good_house": "认定为「好房子」"
+      },
+      "note": "装配式或一星绿建 +10%；二星及以上绿建 +20%；「好房子」+30%。同类情形取最高，不重复叠加。"
+    },
+    "max_uplift": 0.8,
+    "max_uplift_note": "育儿类与住房品质类可叠加，最高 +80% → 一人 180 万元、两人及以上 360 万元。",
+    "rate": {
+      "first": { "le5y": 0.021, "gt5y": 0.026 },
+      "second": { "le5y": 0.02525, "gt5y": 0.03075 },
+      "labels": { "first": "首套", "second": "第二套" },
+      "note": "首套 1–5 年（含）2.1%，5 年以上 2.6%；二套 1–5 年（含）2.525%，5 年以上 3.075%。利率一年一定，遇调整于次年 1 月 1 日执行。"
+    },
+    "down_payment": {
+      "normal": 0.2,
+      "affordable_housing": 0.15,
+      "note": "首套及第二套自住住房最低 20%；购买保障性住房最低 15%。组合贷首付须同时满足商贷要求。"
+    },
+    "max_term_years": 30,
+    "term_notes": [
+      "不超过 30 年，且不超过土地剩余使用年限。",
+      "二手楼「贷款期限 + 楼龄」≤ 50 年。",
+      "建造、翻建、大修 ≤ 10 年。",
+      "借款人年龄 + 贷款期限 ≤ 退休年龄后 5 年，且不超过 68 岁（中心口径：男 63、女 58）。"
+    ],
+    "age_limit": {
+      "male": 68,
+      "female": 63,
+      "note": "由「退休年龄 + 5 年，且不超过 68 岁」推导：男 63+5=68，女 58+5=63。中心口径统一按女 58。"
+    },
+    "second_hand_age_plus_term": 50,
+    "income_ratio_limit": 0.5,
+    "income_ratio_note": "月还贷额不得超过申请人家庭收入的 50%。",
+    "house_count_rule": "按购房所在区认定：区内无住房可按首套；符合「租一买一」「卖一买一」可按核减后套数认定。家庭购买第三套及以上住房不予贷款。",
+    "flexible_employment_formula": {
+      "note": "灵活就业人员按「日均缴存余额 × 缴存系数」计算：累计缴存 24–36 个月系数 1，36–60 个月 1.5，≥60 个月 2.5。本计算器仅实现单位缴存职工公式。",
+      "coefficients": [
+        { "minMonths": 24, "maxMonths": 36, "coefficient": 1 },
+        { "minMonths": 36, "maxMonths": 60, "coefficient": 1.5 },
+        { "minMonths": 60, "maxMonths": null, "coefficient": 2.5 }
+      ]
+    },
+    "repayment_methods": ["equal_installment", "equal_principal"],
+    "repayment_note": "等额本息 / 等额本金，可申请变更；变更后月还款额不得大于家庭月总收入 50%。",
+    "combined_loan_note": "组合贷中公积金与商贷放款银行须一致；首付比例须同时满足两类贷款要求。"
+  },
+  "withdraw": {
+    "applicable": "使用本市住房公积金贷款的，提取人均应办理按月还贷，以缴存账户作为唯一还款账户，缴存的住房公积金优先偿还公积金贷款。",
+    "once_limit": "在按月还贷期间，提取人可以提取一次账户余额，提取金额不超过实际支付的首期房款。非配偶关系按产权比例/产权人数量划分；配偶可共享额度。",
+    "monthly_offset": "账户余额每月自动偿还公积金贷款；余额不足时需以「补缴-还贷补充」方式补足。",
+    "surplus_to_bank": "公积金账户余额偿还公积金贷款后仍有剩余的，每月自动转入提取人本人银行账户，转账额度不超过该套住房商贷部分的月还款额，每月仅划扣一次。",
+    "after_settle": "贷款结清后，每 3 个月可以提取一次，至累计提取金额达到可提取总额。",
+    "total_limit": "同一套住房所有提取人的提取总额不超过实际支付的购房本息。",
+    "early_repay": "还可用住房公积金账户余额提前偿还住房公积金贷款。"
+  },
+  "commercial": {
+    "lpr_5y_plus": 0.035,
+    "lpr_1y": 0.03,
+    "lpr_as_of": "2026-09-20",
+    "lpr_note": "2026 年 9 月 LPR：1 年期 3.0%，5 年期以上 3.5%，已连续 16 个月不变。",
+    "down_payment": 0.15,
+    "down_payment_note": "2026 年 9 月起广州商业性个人住房贷款不再区分首套与二套，最低首付比例统一为 15%；组合贷须同时满足公积金 20%（保障房 15%）的要求。",
+    "presets": [
+      { "label": "LPR−50BP（广州首套主流）", "rate": 0.03 },
+      { "label": "LPR−40BP", "rate": 0.031 },
+      { "label": "LPR−25BP", "rate": 0.0325 },
+      { "label": "LPR 基准", "rate": 0.035 },
+      { "label": "LPR+20BP", "rate": 0.037 }
+    ],
+    "presets_note": "预设为 2026 年 9 月广州市场常见报价，仅供参考；实际加点以银行当期审批为准。可在界面上自行增删。"
+  },
+  "deposit": {
+    "year": "2026 年度（2026-07-01 至 2027-06-30）",
+    "base_min": 2500,
+    "base_max": 41697,
+    "ratio_min": 0.05,
+    "ratio_max": 0.12,
+    "note": "缴存基数下限 2500 元、上限 41697 元；单位与个人缴存比例各 5%–12%（取整数值）。"
+  },
+  "retirement": {
+    "start_date": "2025-01-01",
+    "step_note": "男职工与原 55 岁女职工每 4 个月延迟 1 个月；原 50 岁女职工每 2 个月延迟 1 个月。",
+    "categories": {
+      "male": { "label": "男职工", "base_age": 60, "start_birth": "1965-01", "band_months": 4, "max_delay": 36 },
+      "female_manager": { "label": "女职工（管理技术岗，原 55 岁）", "base_age": 55, "start_birth": "1970-01", "band_months": 4, "max_delay": 36 },
+      "female_worker": { "label": "女职工（生产操作岗，原 50 岁）", "base_age": 50, "start_birth": "1975-01", "band_months": 2, "max_delay": 60 }
+    }
+  },
+  "disclaimer": "本工具依据公开政策文件自行实现，仅供购房测算参考，不构成法律或贷款建议。实际可贷额度、利率与提取额度以广州住房公积金管理中心及受托银行审批结果为准。"
+}

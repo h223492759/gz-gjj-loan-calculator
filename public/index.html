@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="广州住房公积金买房贷款测算器 —— 完全离线、数据保存在本地">
+<title>广州公积金买房贷款测算器</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="locked">
+
+<!-- ======================= 访问门禁 ======================= -->
+<div class="lock" id="lockScreen">
+  <div class="lock-card" id="lockCard">
+    <div class="lock-brand">
+      <span class="brand-dot"></span>
+      <div>
+        <h1>广州公积金买房贷款测算器</h1>
+        <p class="brand-sub">个人 / 家庭自用 · 完全离线 · 数据只存本机</p>
+      </div>
+    </div>
+
+    <form id="lockForm" autocomplete="off">
+      <label for="lockPassword">访问密码</label>
+      <div class="lock-input-row">
+        <input type="password" id="lockPassword" inputmode="text" autocomplete="current-password"
+               placeholder="请输入访问密码" autofocus>
+        <button type="button" class="icon-btn" id="lockEyeBtn" title="显示 / 隐藏密码" aria-label="显示或隐藏密码">👁</button>
+      </div>
+
+      <label class="switch-row lock-remember">
+        <input type="checkbox" id="lockRemember">
+        <span>记住这台设备，<b id="lockRememberDays">30</b> 天内免密</span>
+      </label>
+
+      <div class="alert alert-bad" id="lockError" hidden></div>
+
+      <button type="submit" class="btn btn-primary lock-submit" id="lockSubmit">进入</button>
+    </form>
+
+    <p class="lock-foot">
+      密码由你自己在服务器上设置（<code>docker-compose.yml</code> 的 <code>ACCESS_PASSWORD</code>），
+      本页面不联网、不上报任何信息。
+    </p>
+  </div>
+</div>
+
+<div id="appRoot" hidden>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <div>
+        <h1>广州公积金买房贷款测算器</h1>
+        <p class="brand-sub">依据广州住房公积金管理中心 2026 年现行政策 · 离线运行 · 数据只存本地</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="freshnessBadge" class="badge badge-ok" title="">政策参数</span>
+      <button type="button" id="themeBtn" class="icon-btn" title="切换深色 / 浅色">◐</button>
+      <button type="button" id="logoutBtn" class="icon-btn" title="退出登录（需要重新输入访问密码）">⎋</button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab active" data-tab="calc">测算</button>
+    <button type="button" class="tab" data-tab="records">记录 <span class="tab-count" id="recCount">0</span></button>
+    <button type="button" class="tab" data-tab="policy">政策参数</button>
+    <button type="button" class="tab" data-tab="settings">设置</button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="alert alert-warn" id="defaultPwBanner" hidden>
+    ⚠️ 当前访问密码仍是出厂默认值，任何人都能打开。请到「设置」页改成自己的密码。
+  </div>
+
+  <!-- ======================= 测算 ======================= -->
+  <section class="panel active" data-panel="calc">
+    <div class="layout">
+
+      <!-- ---------- 输入 ---------- -->
+      <form class="card form" id="calcForm" autocomplete="off">
+        <div class="card-head">
+          <h2>输入信息</h2>
+          <button type="button" class="link-btn" id="resetBtn">重置</button>
+        </div>
+
+        <div class="field">
+          <label>贷款方式</label>
+          <div class="segmented" id="modeSeg">
+            <button type="button" data-mode="single">单人贷款</button>
+            <button type="button" data-mode="couple" class="on">双人贷款</button>
+          </div>
+        </div>
+
+        <div id="personBoxes"></div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="loanNeed">需要贷款金额 <span class="unit">万元</span></label>
+            <input type="number" id="loanNeed" step="0.1" min="0" placeholder="例如 200">
+          </div>
+          <div class="field">
+            <label for="houseTotalPrice">购房总价 <span class="unit">万元 · 选填</span></label>
+            <input type="number" id="houseTotalPrice" step="0.1" min="0" placeholder="填了才能算首付与提取额">
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="downRatio">首付比例 <span class="unit">%</span></label>
+            <input type="number" id="downRatio" step="1" min="0" max="90" value="20">
+            <p class="hint" id="downHint"></p>
+          </div>
+          <div class="field">
+            <label for="secondHandAge">二手楼楼龄 <span class="unit">年 · 新房填 0</span></label>
+            <input type="number" id="secondHandAge" step="1" min="0" value="0">
+            <p class="hint">二手楼「期限 + 楼龄」≤ 50 年</p>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label>套数认定（按购房所在区）</label>
+            <div class="segmented" id="typeSeg">
+              <button type="button" data-type="first" class="on">首套</button>
+              <button type="button" data-type="second">第二套</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>还款方式</label>
+            <div class="segmented" id="repaySeg">
+              <button type="button" data-repay="equal_installment" class="on">等额本息</button>
+              <button type="button" data-repay="equal_principal">等额本金</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="termYears">贷款期限 <span class="unit"><b id="termEcho">30</b> 年</span></label>
+          <input type="range" id="termYears" min="5" max="30" step="1" value="30">
+          <p class="hint" id="termHint"></p>
+        </div>
+
+        <div class="field">
+          <label>额度上浮情形</label>
+          <div class="grid2">
+            <select id="childPolicy"></select>
+            <select id="qualityPolicy"></select>
+          </div>
+          <p class="hint">同类取最高、两类可叠加，合计最高 +80%（一人 180 万 / 双人 360 万）</p>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="familyMonthlyIncome">家庭月收入 <span class="unit">元 · 选填</span></label>
+            <input type="number" id="familyMonthlyIncome" step="100" min="0" placeholder="用于校验月供不超收入 50%">
+          </div>
+          <div class="field">
+            <label class="switch-row">
+              <input type="checkbox" id="isAffordableHousing">
+              <span>购买保障性住房（最低首付 15%）</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>商贷利率 <span class="unit">% · 点选或自行添加</span></label>
+          <div class="chips" id="rateChips"></div>
+          <div class="chips" id="customRateList" style="margin-top:8px"></div>
+          <div class="inline-add">
+            <input type="number" id="customRate" step="0.001" min="0.1" placeholder="自定义利率，如 3.15">
+            <button type="button" class="btn btn-ghost" id="addRateBtn">添加</button>
+          </div>
+          <p class="hint" id="lprHint"></p>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">开始测算</button>
+          <button type="button" class="btn btn-ghost" id="saveBtn">保存记录</button>
+        </div>
+      </form>
+
+      <!-- ---------- 输出 ---------- -->
+      <div class="result" id="result">
+        <div class="card empty">
+          <p>填好左侧信息后点「开始测算」，这里会给出<br>
+          <b>能否满贷 / 需要多少商贷 / 月供与利息 / 能提取多少余额</b>。</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================= 记录 ======================= -->
+  <section class="panel" data-panel="records">
+    <div class="card">
+      <div class="card-head">
+        <h2>历史记录</h2>
+        <div class="head-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="exportBtn">导出备份</button>
+          <label class="btn btn-ghost btn-sm" for="importFile">导入备份</label>
+          <input type="file" id="importFile" accept="application/json,.json" hidden>
+        </div>
+      </div>
+      <p class="muted">全部记录保存在本地数据库。可一键载入到测算页继续改，也可以直接更名 / 复制 / 删除。</p>
+      <div id="recordList" class="record-list"></div>
+    </div>
+  </section>
+
+  <!-- ======================= 政策参数 ======================= -->
+  <section class="panel" data-panel="policy">
+    <div id="policyBox"></div>
+  </section>
+
+  <!-- ======================= 设置 ======================= -->
+  <section class="panel" data-panel="settings">
+    <div id="settingsBox"></div>
+  </section>
+
+</main>
+
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

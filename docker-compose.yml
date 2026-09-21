@@ -1,0 +1,52 @@
+services:
+  gz-gjj:
+    # 镜像由 GitHub Actions 自动构建并推送，飞牛上只需拉取，不需要在 NAS 上编译。
+    # 默认走 GHCR（免登录、无需额外配置）。
+    image: ghcr.io/h223492759/gz-gjj-loan-calculator:latest
+    # 若希望走 Docker Hub（部分网络下 docker.io 镜像源更稳），
+    # 请在新仓库 Settings → Secrets 里补上 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，
+    # 重跑一次 Actions 之后，把上面那行换成下面这行即可：
+    # image: h223492759/gz-gjj-loan-calculator:latest
+
+    container_name: gz-gjj-loan-calculator
+    restart: unless-stopped
+
+    ports:
+      # 宿主机端口:容器端口 —— 若 8888 被占用，只改冒号左边
+      - "8888:8888"
+
+    environment:
+      TZ: Asia/Shanghai
+      PORT: 8888
+      DATA_DIR: /app/data
+
+      # ===================== 访问口令（必改） =====================
+      # 个人 / 家庭自用，不建账号，全家共用这一个密码。
+      # 打开网页会先要求输入它，输对了才能看到任何内容。
+      #
+      # ⚠️ 这一行是出厂默认值，请务必改成你自己的密码后再启动，
+      #    改完保存、重启容器即生效（每次启动都会以这里为准）。
+      # 想改成在网页「设置」里自己管理密码：把下面这行删掉或留空，
+      #    重启后会以本地 data/auth.json 里的密码为准。
+      ACCESS_PASSWORD: "gzgjj@2026"
+
+      # 可选微调（不需要就整段删掉）
+      # SESSION_HOURS: "12"        # 不勾「记住这台设备」时的登录有效期（小时）
+      # REMEMBER_DAYS: "30"        # 勾选后免密天数
+      # MAX_LOGIN_FAILS: "5"       # 连续输错几次开始临时锁定
+      # LOGIN_LOCK_SECONDS: "60"   # 临时锁定时长（秒）
+
+    volumes:
+      # SQLite 数据库落在宿主机，容器删了 / 升级了数据都还在
+      - ./data:/app/data
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8888/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

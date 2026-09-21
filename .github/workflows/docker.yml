@@ -1,0 +1,298 @@
+name: Build and Push Image
+
+# 推 tag（或手动触发）时自动：
+#   1) 跑测算引擎断言 + 访问门禁断言（纯 Node，无需装依赖）
+#   2) 用【空数据卷】跑真容器做全新部署冒烟，冻结「NAS 首次 docker compose up」场景，
+#      并覆盖访问密码全链路：未登录 401 → 错密码 401 → 随机密码登录 → 改密码后旧通行证失效
+#   3) 构建 amd64 + arm64 镜像并推送到 GHCR（配了 Docker Hub Secrets 时同时推 Docker Hub）
+#   4) 同步创建 / 更新 GitHub Release，释放出本次发布版本号
+#
+# 可选 Secrets（不配也能跑，只是不推 Docker Hub）：
+#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE_NAME: gz-gjj-loan-calculator
+
+jobs:
+  test:
+    name: 引擎与门禁断言
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 测算引擎断言
+        run: node test/engine.test.js
+      - name: 访问门禁断言
+        run: node test/auth.test.js
+
+  smoke:
+    name: 全新部署冒烟（空数据卷）
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 构建 amd64 测试镜像（不推送）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: gzgjj:fresh-smoke
+          build-args: |
+            APP_VERSION=smoke
+          cache-from: type=gha
+
+      - name: 空数据卷启动 → 门禁 → 健康检查 → 写入 → 重启，全程断言
+        run: |
+          set -euo pipefail
+          docker rm -f gzgjj-smoke 2>/dev/null || true
+          docker volume rm gzgjj-smoke-data 2>/dev/null || true
+          docker volume create gzgjj-smoke-data >/dev/null
+
+          B=http://127.0.0.1:18888
+          COOKIE=/tmp/gzgjj-cookie.txt
+          rm -f "$COOKIE"
+
+          start() {
+            docker run -d --name gzgjj-smoke -p 18888:8888 "$@" \
+              -v gzgjj-smoke-data:/app/data gzgjj:fresh-smoke >/dev/null
+          }
+
+          wait_health() {
+            for i in $(seq 1 60); do
+              if curl -sf $B/api/health >/dev/null 2>&1; then return 0; fi
+              if [ "$(docker inspect -f '{{.State.Running}}' gzgjj-smoke 2>/dev/null)" != "true" ]; then
+                echo "❌ 容器已退出（无限重启）"; docker logs gzgjj-smoke; return 1
+              fi
+              sleep 2
+            done
+            echo "❌ 健康检查超时"; docker logs gzgjj-smoke; return 1
+          }
+
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
+          echo "=== 首次启动（不设 ACCESS_PASSWORD，走「自动生成随机密码」路径）==="
+          start
+          wait_health
+          docker logs gzgjj-smoke
+
+          echo "=== 门禁：没输密码，什么业务数据都拿不到 ==="
+          [ "$(code $B/api/meta)" = "401" ] || { echo "❌ /api/meta 未登录应为 401"; exit 1; }
+          for p in /api/calc /api/records /api/export /api/presets /api/records/1; do
+            [ "$(code $B$p)" = "401" ] || { echo "❌ $p 未登录应为 401"; exit 1; }
+          done
+          [ "$(code -X POST -H 'Content-Type: application/json' -d '{"password":"definitely-wrong"}' $B/api/auth/login)" = "401" ] \
+            || { echo "❌ 错误密码应 401"; exit 1; }
+          [ "$(code $B/api/health)" = "200" ] || { echo "❌ 健康检查必须免密码（容器 healthcheck 依赖它）"; exit 1; }
+
+          echo "=== 首页可访问但只给锁屏，不含任何数据 ==="
+          curl -sf $B/ | grep -q 'id="lockScreen"' || { echo "❌ 首页应含锁屏容器"; exit 1; }
+          curl -sf $B/ | grep -q 'id="appRoot" hidden' || { echo "❌ 未登录时应用主体应默认隐藏"; exit 1; }
+          curl -sf $B/app.js >/dev/null && curl -sf $B/style.css >/dev/null && echo "静态资源 OK"
+
+          echo "=== 用容器日志里自动生成的密码登录 ==="
+          PW=$(docker logs gzgjj-smoke 2>&1 | grep -o '访问密码：[A-Za-z0-9]*' | head -1 | sed 's/访问密码：//')
+          [ -n "$PW" ] || { echo "❌ 未从日志里读到自动生成的密码"; exit 1; }
+          echo "取到自动生成的密码（长度 ${#PW}）"
+          curl -sf -c "$COOKIE" -X POST -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$PW\"}" $B/api/auth/login \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["ok"], d;print("登录 OK, 有效期至", d["expiresAt"])'
+          grep -q gzgjj_auth "$COOKIE" || { echo "❌ 登录成功但没下发通行证 Cookie"; exit 1; }
+          curl -sf -b "$COOKIE" $B/api/auth/status \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["authed"] is True;assert d["usingDefaultPassword"] is False;print("已登录状态 OK")'
+
+          echo "=== 元信息与版本号 ==="
+          curl -sf -b "$COOKIE" $B/api/meta | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["city"]=="广州";assert d["loan"]["base_cap"]["couple"]==2000000;assert d["loan"]["balance_multiplier"]==10;print("meta OK, 参数日期", d["asOf"])'
+          curl -sf $B/api/health | python3 -c 'import sys,json;print("version:",json.load(sys.stdin)["version"])'
+
+          echo "=== 测算接口（真实计算路径）==="
+          curl -sf -b "$COOKIE" -X POST -H 'Content-Type: application/json' \
+            -d '{"mode":"couple","persons":[{"label":"借款人","birth":"1992-06","category":"male","balance":86000,"monthlyDeposit":2600},{"label":"共同借款人","birth":"1994-03","category":"female_manager","balance":62000,"monthlyDeposit":1900}],"loanNeed":2000000,"houseTotalPrice":2600000,"downRatio":20,"loanType":"first","termYears":30,"childPolicy":"one","qualityPolicy":"none","commercialRate":3.0,"customRates":[3.0,3.5],"repayment":"equal_installment","asOf":"2026-09-21"}' \
+            $B/api/calc \
+            | python3 -c 'import sys,json;r=json.load(sys.stdin)["result"];assert r["ok"];assert r["formulaTotal"]==2958400, r["formulaTotal"];assert r["maxLoanGjj"]==2080000, r["maxLoanGjj"];assert r["fullCover"] is True;assert r["payment"]["total"]["first"]>0;assert r["withdraw"]["downPayment"]==600000, r["withdraw"]["downPayment"];print("calc OK 可贷", r["maxLoanGjj"], "首月月供", r["payment"]["total"]["first"], "可提取", r["withdraw"]["onceLimit"])'
+
+          echo "=== 记录：保存 → 更名 → 复制 → 读取 → 删除 ==="
+          ID=$(curl -sf -b "$COOKIE" -X POST -H 'Content-Type: application/json' \
+            -d '{"name":"ci 用例","payload":{"mode":"single","persons":[{"birth":"1990-01","category":"male","balance":80000,"monthlyDeposit":2500}],"loanNeed":1000000,"termYears":30}}' \
+            $B/api/records | python3 -c 'import sys,json;print(json.load(sys.stdin)["record"]["id"])')
+          echo "新建 id=$ID"
+          curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' -d '{"name":"ci 用例（已更名）"}' \
+            "$B/api/records/$ID" \
+            | python3 -c 'import sys,json;assert json.load(sys.stdin)["record"]["name"]=="ci 用例（已更名）";print("更名 OK")'
+          curl -sf -b "$COOKIE" -X POST -H 'Content-Type: application/json' -d '{}' \
+            "$B/api/records/$ID/duplicate" \
+            | python3 -c 'import sys,json;print("复制 OK, 新 id", json.load(sys.stdin)["record"]["id"])'
+          curl -sf -b "$COOKIE" $B/api/records \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert len(d["records"])==2, d;print("列表 OK, 共", len(d["records"]), "条")'
+          curl -sf -b "$COOKIE" $B/api/export \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert len(d["records"])==2;print("导出 OK")'
+
+          echo "=== 退出登录：回应里必须带清理通行证的 Set-Cookie ==="
+          curl -s -D - -o /dev/null -b "$COOKIE" -X POST $B/api/auth/logout \
+            | grep -qi 'gzgjj_auth=;' || { echo "❌ 退出登录没有清理通行证 Cookie"; exit 1; }
+          echo "退出登录清理 Cookie OK"
+
+          echo "=== 退出所有设备：当前通行证立刻作废 ==="
+          curl -sf -b "$COOKIE" -X POST $B/api/auth/logout-all >/dev/null
+          [ "$(code -b "$COOKIE" $B/api/records)" = "401" ] || { echo "❌ 退出所有设备后旧通行证仍可用"; exit 1; }
+          curl -sf -c "$COOKIE" -X POST -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$PW\"}" $B/api/auth/login >/dev/null
+          curl -sf -b "$COOKIE" $B/api/records >/dev/null && echo "重新登录后可用 OK"
+
+          echo "=== 改密码：旧通行证与旧密码同时失效，数据不丢 ==="
+          docker rm -f gzgjj-smoke >/dev/null
+          start -e ACCESS_PASSWORD="ci-pass-2026"
+          wait_health
+          [ "$(code -b "$COOKIE" $B/api/records)" = "401" ] || { echo "❌ 改密码后旧通行证应失效"; exit 1; }
+          [ "$(code -X POST -H 'Content-Type: application/json' -d "{\"password\":\"$PW\"}" $B/api/auth/login)" = "401" ] \
+            || { echo "❌ 改密码后旧密码应失效"; exit 1; }
+          curl -sf -c "$COOKIE" -X POST -H 'Content-Type: application/json' \
+            -d '{"password":"ci-pass-2026"}' $B/api/auth/login >/dev/null
+          curl -sf -b "$COOKIE" $B/api/auth/status \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["pinnedByEnv"] is True;print("密码由环境变量固定 OK")'
+          curl -sf -b "$COOKIE" $B/api/records \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert len(d["records"])==2, "重启后数据丢失: %s"%d;print("重启后数据仍在 OK")'
+
+          echo "=== 密码不以明文落盘 ==="
+          if docker exec gzgjj-smoke sh -c 'cat /app/data/auth.json' | grep -q 'ci-pass-2026'; then
+            echo "❌ auth.json 里出现明文密码"; exit 1
+          fi
+          docker exec gzgjj-smoke sh -c 'cat /app/data/auth.json' \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["password"]["algo"]=="scrypt";assert "ci-pass-2026" not in json.dumps(d);print("auth.json 哈希存储 OK")'
+
+          echo "=== 首页与静态资源 ==="
+          curl -sf $B/ | grep -q "广州公积金买房贷款测算器" && echo "首页 OK"
+          curl -sf $B/app.js >/dev/null && echo "静态资源 OK"
+          curl -sf -b "$COOKIE" -X DELETE "$B/api/records/$ID" >/dev/null && echo "删除 OK"
+          curl -sf -b "$COOKIE" $B/api/records \
+            | python3 -c 'import sys,json;assert len(json.load(sys.stdin)["records"])==1;print("删除后剩余 OK")'
+
+          echo "=== 启动日志异常断言 ==="
+          LOGS=$(docker logs gzgjj-smoke 2>&1)
+          echo "$LOGS"
+          if echo "$LOGS" | grep -Ei "SqliteError|no such column|no such table|UnhandledPromiseRejection|Error:"; then
+            echo "❌ 启动日志出现异常"; exit 1
+          fi
+          echo "✅ 全新部署 + 访问门禁冒烟全部通过"
+
+      - name: 清理
+        if: ${{ always() }}
+        run: |
+          docker logs gzgjj-smoke > /tmp/smoke-final.log 2>&1 || true
+          docker rm -f gzgjj-smoke 2>/dev/null || true
+          docker volume rm gzgjj-smoke-data 2>/dev/null || true
+
+  build:
+    name: 构建并推送镜像
+    runs-on: ubuntu-latest
+    needs: smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 检测是否配置了 Docker Hub 凭据
+        id: dh
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 Docker Hub Secrets，本次只推送到 GHCR"
+          fi
+
+      - name: Set up QEMU（交叉编译 arm64）
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.dh.outputs.ok == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 计算版本号（北京时间 vYYMMDD-HHMM）
+        id: ver
+        run: echo "APP_VERSION=v$(TZ=Asia/Shanghai date +%y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.APP_VERSION }}
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.APP_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push → Docker Hub
+        if: steps.dh.outputs.ok == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.APP_VERSION }}
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.APP_VERSION }}
+          cache-from: type=gha
+
+      - name: 将 GHCR 镜像包设为 Public（免登录拉取）
+        if: ${{ always() }}
+        run: |
+          curl -s -X PUT \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/user/packages/container/${IMAGE_NAME}/visibility" \
+            -d '{"visibility":"public"}' \
+            || echo "若失败，请到 GitHub → Packages → ${IMAGE_NAME} → Settings 手动改为 Public"
+
+      - name: 创建 / 更新 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.APP_VERSION }}"
+          REPO="${{ github.repository }}"
+          PREV=$(git tag --sort=-creatordate | head -1)
+          if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD"; fi
+          LOG=$(git log --no-merges --pretty=format:"- %s" -n 25 "$RANGE")
+          BODY=$'## 镜像（构建于 '"$TAG"$'\n\n- GHCR：docker pull ghcr.io/'"$REPO"$':latest\n- 飞牛部署：把仓库根目录的 docker-compose.yml 粘进「Docker → 添加项目」即可，端口 8888\n\n## 本次更新\n'"$LOG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$BODY"
+          else
+            gh release create "$TAG" --title "$TAG" --latest --notes "$BODY"
+          fi
