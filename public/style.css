@@ -237,6 +237,8 @@ input:focus, select:focus {
   background: var(--card);
 }
 input::placeholder { color: var(--faint); }
+/* 锁二算一：联动自动算出的字段灰显提示（用户一点进去改就恢复正常色） */
+input.auto { color: var(--muted); }
 /* input[type="date"] 单独写：不套用上面的 appearance:none，
    否则 Safari 会连日历图标一起抹掉，用户点不出选择器。 */
 input[type="date"] {

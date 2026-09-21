@@ -608,6 +608,17 @@ it('逐年月供表新增「每月实付」：先扣公积金账户，账户扣�
   assert.ok(near(sumCash, c.totalCashInstallment, 0.1), `逐年实付合计 ${sumCash} ≈ ${c.totalCashInstallment}`);
 });
 
+it('锁二算一：只给首付金额（不给比例/总价）→ 总价=贷款+首付，比例按金额反推，总价闸门放行', () => {
+  const r = calculate({ ...base, loanNeed: 2000000, houseTotalPrice: 0, downRatio: null, downAmount: 500000 });
+  assert.ok(near(r.totalPrice, 2500000, 1), `总价应 = 200万 + 50万 = 250万，实际 ${r.totalPrice}`);
+  assert.ok(near(r.downRatio, 0.2, 1e-9), `首付比例应 = 50/250 = 20%，实际 ${r.downRatio}`);
+  assert.ok(near(r.downAmount, 500000, 1), `首付金额应 = 50万，实际 ${r.downAmount}`);
+  assert.ok(r.maxLoanGjj >= 2000000 - 1, `总价闸门不应把 200 万贷款削下去，实际可贷 ${r.maxLoanGjj}`);
+  // 金额换算出的比例低于政策下限要告警（如贷 220 万只付 20 万）
+  const r2 = calculate({ ...base, loanNeed: 2200000, houseTotalPrice: 0, downRatio: null, downAmount: 200000 });
+  assert.ok(r2.warnings.some((w) => /低于现行最低/.test(w)), '首付占比低于政策下限应有警告');
+});
+
 /* ------------------------------ 执行 ------------------------------ */
 
 let failed = 0;

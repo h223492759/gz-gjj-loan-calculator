@@ -136,13 +136,10 @@ function calculate(input) {
 
   const loanType = input.loanType === 'second' ? 'second' : 'first';
   const isAffordable = !!input.isAffordableHousing;
-  const downRatio = Number.isFinite(Number(input.downRatio)) && Number(input.downRatio) >= 0
+  let downRatio = Number.isFinite(Number(input.downRatio)) && Number(input.downRatio) >= 0
     ? Number(input.downRatio) / (Number(input.downRatio) > 1 ? 100 : 1)
-    : (isAffordable ? cfg.loan.down_payment.affordable_housing : cfg.loan.down_payment.normal);
+    : null; // null = 未填，后面可能由首付金额反推，或用政策默认
   const minDownRatio = isAffordable ? cfg.loan.down_payment.affordable_housing : cfg.loan.down_payment.normal;
-  if (downRatio < minDownRatio - 1e-9) {
-    warnings.push(`首付比例 ${(downRatio * 100).toFixed(0)}% 低于现行最低 ${(minDownRatio * 100).toFixed(0)}%，政策口径下不成立。`);
-  }
 
   const method = input.repayment === 'equal_principal' ? 'equal_principal' : 'equal_installment';
   // 用户选的期限 vs 实际生效期限：选了 30 年但年龄/楼龄不够时，第 5 步会自动收敛
@@ -201,14 +198,29 @@ function calculate(input) {
     }
   });
 
-  /* ---------------- 3. 总价 / 首付 约束 ---------------- */
+  /* ---------------- 3. 总价 / 首付 约束（锁二算一：贷款、总价、首付金额三者的口径校验在这里收口） ---------------- */
   const priceGiven = Number(input.houseTotalPrice) > 0;
-  const derivedTotalPrice = loanNeed / Math.max(1 - downRatio, 0.05);
-  const totalPrice = priceGiven ? Number(input.houseTotalPrice) : derivedTotalPrice;
-  const priceCap = priceGiven ? totalPrice * (1 - downRatio) : Infinity;
-  notes.push(priceGiven
-    ? '已按填写的购房总价校验「贷款额 ≤ 总价 ×（1 − 首付比例）」。'
-    : '未填写购房总价，已按「贷款金额 ÷（1 − 首付比例）」反推总价；填写总价可获得更准确的首付与提取额度。');
+  // 首付金额（元）优先：给了就以它为准反推比例（总价未填时按「贷款 + 首付」反推总价）
+  const downAmountIn = Number(input.downAmount) > 0 ? Number(input.downAmount) : null;
+  let totalPrice;
+  if (downAmountIn != null) {
+    totalPrice = priceGiven ? Number(input.houseTotalPrice) : loanNeed + downAmountIn;
+    downRatio = totalPrice > 0 ? downAmountIn / totalPrice : downRatio;
+  } else {
+    totalPrice = priceGiven ? Number(input.houseTotalPrice)
+      : loanNeed / Math.max(1 - (downRatio != null ? downRatio : minDownRatio), 0.05);
+    if (downRatio == null) downRatio = minDownRatio;
+  }
+  if (downRatio < minDownRatio - 1e-9) {
+    warnings.push(`首付比例 ${(downRatio * 100).toFixed(1)}% 低于现行最低 ${(minDownRatio * 100).toFixed(0)}%，政策口径下不成立。`);
+  }
+  const priceCap = totalPrice * (1 - downRatio);
+  const priceCapApplies = priceGiven || downAmountIn != null;
+  notes.push(downAmountIn != null
+    ? `已按填写的首付金额 ${yuan(downAmountIn)} 元（占比 ${(downRatio * 100).toFixed(1)}%）校验额度。`
+    : priceGiven
+      ? '已按填写的购房总价校验「贷款额 ≤ 总价 ×（1 − 首付比例）」。'
+      : '未填写购房总价，已按「贷款金额 ÷（1 − 首付比例）」反推总价；填写总价可获得更准确的首付与提取额度。');
 
   /* ---------------- 4. 公积金可贷额 ---------------- */
   const cap = upliftCap;
@@ -216,7 +228,7 @@ function calculate(input) {
     { key: 'formula', label: '额度公式（余额×10 + 月缴存额×到退休月数）', value: formulaTotal },
     { key: 'cap', label: `最高限额（${(baseCap / 10000)} 万 × 上浮 ${(upliftRate * 100).toFixed(0)}%）`, value: cap }
   ];
-  if (priceGiven) candidates.push({ key: 'price', label: '购房总价 ×（1 − 首付比例）', value: priceCap });
+  if (priceCapApplies) candidates.push({ key: 'price', label: '购房总价 ×（1 − 首付比例）', value: priceCap });
 
   const binding = candidates.reduce((a, b) => (b.value < a.value ? b : a));
   // 可贷额按元向下取整：余额带角分时公式额也可能是小数，但额度不会报到「分」
@@ -461,6 +473,7 @@ function calculate(input) {
     minDownRatio,
     totalPrice: yuan(totalPrice),
     totalPriceDerived: !priceGiven,
+    downAmount: yuan(Math.max(0, totalPrice - loanNeed)),
     loanNeed,
     rate: {
       gjj: gr.rate,

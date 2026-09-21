@@ -364,12 +364,16 @@ function collect() {
     monthlyDeposit: num($('.p-deposit', box).value)
   }));
 
+  const ratioVal = num($('#downRatio').value);
+  const amountWan = num($('#downAmount').value);
   return {
     mode: state.mode,
     persons,
     loanNeed: num($('#loanNeed').value) * 10000,
     houseTotalPrice: num($('#houseTotalPrice').value) * 10000,
-    downRatio: num($('#downRatio').value) || 20,
+    downMode: state.downMode === 'amount' ? 'amount' : 'ratio',
+    downRatio: ratioVal > 0 ? ratioVal : null,
+    downAmount: amountWan > 0 ? Math.round(amountWan * 10000) : null,
     loanType: state.loanType,
     termYears: num($('#termYears').value) || 30,
     childPolicy: $('#childPolicy').value,
@@ -392,7 +396,12 @@ function fill(payload) {
 
   $('#loanNeed').value = p.loanNeed ? (num(p.loanNeed) / 10000) : '';
   $('#houseTotalPrice').value = p.houseTotalPrice ? (num(p.houseTotalPrice) / 10000) : '';
-  $('#downRatio').value = p.downRatio != null ? p.downRatio : 20;
+  state.downMode = p.downMode === 'amount' ? 'amount' : 'ratio';
+  setDownMode(state.downMode);
+  $('#downRatio').value = p.downRatio != null ? p.downRatio : '';
+  $('#downAmount').value = p.downAmount ? (num(p.downAmount) / 10000) : '';
+  state.linkOrder = [];
+  mirrorDown();
   if (p.builtAt) { setBuiltMode('date'); $('#builtAt').value = p.builtAt; }
   else if (num(p.secondHandAge) > 0) { setBuiltMode('age'); $('#secondHandAge').value = p.secondHandAge; }
   else { $('#builtAt').value = ''; $('#secondHandAge').value = ''; }
@@ -429,10 +438,94 @@ function setBuiltMode(mode) {
   $('#secondHandAge').value = '';
 }
 
+function setDownMode(mode) {
+  state.downMode = mode === 'amount' ? 'amount' : 'ratio';
+  $$('#downSeg button').forEach((b) => b.classList.toggle('on', b.dataset.dmode === state.downMode));
+  $('#downRatio').hidden = state.downMode !== 'ratio';
+  $('#downAmount').hidden = state.downMode !== 'amount';
+  mirrorDown();
+}
+
+/** 首付比例 ⇄ 金额互为镜像：知道总价就把另一个也补上（灰色 auto，可直接改） */
+function mirrorDown() {
+  const P = num($('#houseTotalPrice').value);
+  const r = num($('#downRatio').value);
+  const a = num($('#downAmount').value);
+  if (!(P > 0)) return;
+  if (r > 0 && !(a > 0)) {
+    $('#downAmount').value = String(Math.round(P * r / 100 * 100) / 100);
+    $('#downAmount').classList.add('auto');
+  } else if (a > 0 && !(r > 0)) {
+    $('#downRatio').value = String(Math.round(a / P * 100 * 10) / 10);
+    $('#downRatio').classList.add('auto');
+  }
+}
+
+/**
+ * 锁二算一：需要贷款金额 / 购房总价 / 首付 三组输入，任意手填两组，第三组自动算
+ * （灰色 auto，可直接改）。联动规则按用户意图定优先级：
+ *   · 贷款金额 = 意图锚点，最后才让位（改首付/总价优先互相让位）；
+ *   · 购房总价 = 市场事实，仅在手填首付与贷款冲突时让位给「贷款+首付」反推；
+ *   · 首付 = 默认让位变量（改贷款或总价都重算它）。
+ * 每次同步把「比例 ⇄ 金额」两个框一齐写齐，不留过期值。
+ */
+function syncDownLink(src) {
+  const loan = $('#loanNeed'), price = $('#houseTotalPrice');
+  const ratioEl = $('#downRatio'), amountEl = $('#downAmount');
+  [loan, price, ratioEl, amountEl].forEach((el) => el.classList.remove('auto'));
+
+  const L = num(loan.value);      // 万
+  const P = num(price.value);     // 万
+  const r = num(ratioEl.value);   // %
+  const a = num(amountEl.value);  // 万
+  const r2 = (x) => String(Math.round(x * 100) / 100);
+  const pctOf = (amt, tot) => String(Math.round(amt / tot * 1000) / 10);
+  const downKnown = r > 0 || a > 0;
+  const isAutoOrEmpty = (el) => el.classList.contains('auto') || !(num(el.value) > 0);
+
+  // 写首付（金额+比例两个框一齐），或反推总价 / 贷款
+  const writeDown = (amtWan, totalWan) => {
+    if (!(amtWan > 0) || !(totalWan > 0) || amtWan >= totalWan) return;
+    amountEl.value = r2(amtWan);
+    ratioEl.value = pctOf(amtWan, totalWan);
+    amountEl.classList.add('auto');
+    ratioEl.classList.add('auto');
+  };
+  const derivePrice = () => {
+    let v = 0;
+    if (a > 0) v = L + a;
+    else if (r > 0 && r < 100) v = L / (1 - r / 100);
+    if (v > 0) {
+      price.value = r2(v); price.classList.add('auto');
+      writeDown(a > 0 ? a : v - L, v);
+    }
+  };
+  const deriveLoan = () => {
+    let v = 0;
+    if (a > 0) v = P - a;
+    else if (r > 0 && r < 100) v = P * (1 - r / 100);
+    if (v > 0) { loan.value = r2(v); loan.classList.add('auto'); }
+  };
+
+  if (src === 'loan' && L > 0) {
+    if (isAutoOrEmpty(ratioEl) && isAutoOrEmpty(amountEl) && P > 0) writeDown(P - L, P);
+    else if (isAutoOrEmpty(price) && downKnown) derivePrice();
+    else if (P > 0) writeDown(P - L, P); // 总价与首付都手填过 → 首付让位（总价是事实）
+  } else if (src === 'price' && P > 0) {
+    if (isAutoOrEmpty(ratioEl) && isAutoOrEmpty(amountEl) && L > 0) writeDown(P - L, P);
+    else if (isAutoOrEmpty(loan) && downKnown) deriveLoan();
+    else if (L > 0) writeDown(P - L, P);
+  } else if (src === 'down' && downKnown) {
+    if (isAutoOrEmpty(price) && L > 0) derivePrice();
+    else if (isAutoOrEmpty(loan) && P > 0) deriveLoan();
+    else if (L > 0) derivePrice(); // 贷款是意图锚点 → 让总价反推
+  }
+}
+
 function updateDownHint() {
   const affordable = $('#isAffordableHousing').checked;
   const min = affordable ? state.meta.loan.down_payment.affordable_housing * 100 : state.meta.loan.down_payment.normal * 100;
-  $('#downHint').textContent = `现行最低 ${min}%${affordable ? '（保障性住房）' : '（首套及第二套）'}`;
+  $('#downHint').textContent = `现行最低 ${min}%${affordable ? '（保障性住房）' : '（首套及第二套）'}；也可切换「按金额」直接填首付万元数`;
   $('#lprHint').textContent = `${state.meta.commercial.lpr_note} 组合贷首付须同时满足公积金要求。`;
 }
 
@@ -468,8 +561,13 @@ function initBlankForm() {
   $('#loanNeed').value = '';
   if (d.loanNeed) $('#loanNeed').placeholder = `例如 ${wanOf(d.loanNeed)}`;
   $('#houseTotalPrice').value = '';
-  if (d.houseTotalPrice) $('#houseTotalPrice').placeholder = `如 ${wanOf(d.houseTotalPrice)}；选填，填了才能算首付与提取额`;
+  if (d.houseTotalPrice) $('#houseTotalPrice').placeholder = `如 ${wanOf(d.houseTotalPrice)}`;
+  setDownMode('ratio');
   $('#downRatio').value = '';
+  $('#downAmount').value = '';
+  $('#downRatio').classList.remove('auto');
+  $('#downAmount').classList.remove('auto');
+  state.linkOrder = [];
   setBuiltMode('date');
   $('#builtAt').value = '';
   $('#secondHandAge').value = '';
@@ -518,8 +616,9 @@ function recordMetaText(rec) {
   const mode = p.mode === 'single' ? '单人' : '双人';
   const need = p.loanNeed ? `贷款 ${wan(p.loanNeed)} 万` : '未填贷款额';
   const totalPrice = p.houseTotalPrice ? ` · 总价 ${wan(p.houseTotalPrice)} 万` : '';
+  const down = p.downAmount ? ` · 首付 ${wan(p.downAmount)} 万` : (p.downRatio ? ` · 首付 ${p.downRatio}%` : '');
   const term = p.termYears ? ` · ${p.termYears} 年` : '';
-  return `${mode} · ${gp} · ${need}${totalPrice}${term}`;
+  return `${mode} · ${gp} · ${need}${totalPrice}${down}${term}`;
 }
 
 /** 把一条记录载入表单（editing=true 时进入编辑态，保存会覆盖该记录） */
@@ -647,6 +746,9 @@ function render(r) {
     <div class="verdict-line">
       需要贷款 <b>${wan(r.loanNeed)} 万</b> →
       公积金可贷 <b>${wan(r.gjjAmount)} 万</b>${r.maxLoanGjj - r.gjjAmount > 1 ? `（当前叠加满贷 <b>${wan(r.maxLoanGjj)} 万</b>，含上浮）` : ''}${r.commercialAmount > 0 ? `，缺口 <b>${wan(r.commercialAmount)} 万</b> 需走商贷` : '，<b>无需商贷</b>'}
+    </div>
+    <div class="verdict-line">
+      购房总价 <b>${wan(r.totalPrice)} 万</b> · 首付 <b>${wan(r.withdraw.downPayment)} 万</b>（${(r.downRatio * 100).toFixed(1)}%）
     </div>
     ${r.termAdjusted ? `<div class="verdict-line">⚠️ 期限已按政策上限自动修正为 <b>${r.termYears} 年</b>（你选的是 ${r.requestedTermYears} 年）</div>` : ''}
   </div>`;
@@ -790,6 +892,14 @@ function render(r) {
         : '按当前缴存与账户余额，整段还款期内账户都够扣，每月实付为 0（未考虑缴存调整、断缴等情形）。'
     }假设已提取「能提取的余额」、且办理了公积金委托扣款。</p>`;
   }
+
+  /* ---- 购房总价与首付 ---- */
+  html += `<div class="sec-title">购房总价与首付</div>
+    <div class="rows">
+      <div class="row"><span class="rk">购房总价</span><span class="rv">${wan(r.totalPrice)} 万${r.totalPriceDerived ? '<small>未填总价，按贷款与首付反推</small>' : ''}</span></div>
+      <div class="row"><span class="rk">首付金额（首付比例）</span><span class="rv">${yuan(r.withdraw.downPayment)} 元（${(r.downRatio * 100).toFixed(1)}%）</span></div>
+      <div class="row"><span class="rk">核对：贷款 + 首付 = 总价</span><span class="rv">${wan(r.loanNeed)} + ${wan(r.withdraw.downPayment)} = ${wan(r.totalPrice)} 万</span></div>
+    </div>`;
 
   /* ---- 提取与现金流 ---- */
   html += `<div class="sec-title">余额提取与每月现金流</div>
@@ -1364,6 +1474,15 @@ function bindEvents() {
 
   $('#isAffordableHousing').addEventListener('change', updateDownHint);
   $('#downRatio').addEventListener('change', updateDownHint);
+  $$('#downSeg button').forEach((b) => b.addEventListener('click', () => {
+    setDownMode(b.dataset.dmode);
+    updateDownHint();
+  }));
+  // 锁二算一联动：贷款 / 总价 / 首付 任手填两组，第三组自动算
+  $('#loanNeed').addEventListener('input', () => syncDownLink('loan'));
+  $('#houseTotalPrice').addEventListener('input', () => syncDownLink('price'));
+  $('#downRatio').addEventListener('input', () => syncDownLink('down'));
+  $('#downAmount').addEventListener('input', () => syncDownLink('down'));
 
   $('#addRateBtn').addEventListener('click', () => {
     const v = num($('#customRate').value);
