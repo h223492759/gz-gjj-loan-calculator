@@ -93,6 +93,7 @@ app.get('/api/meta', (req, res) => {
       qualityPolicy: 'none',
       isAffordableHousing: false,
       secondHandAge: 0,
+      builtAt: null,
       familyMonthlyIncome: 38000,
       commercialRate: 3.0,
       customRates: [3.0, 3.1, 3.25, 3.5, 3.7],

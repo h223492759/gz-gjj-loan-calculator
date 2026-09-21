@@ -154,9 +154,9 @@
             <p class="hint" id="downHint"></p>
           </div>
           <div class="field">
-            <label for="secondHandAge">二手楼楼龄 <span class="unit">年 · 新房填 0</span></label>
-            <input type="number" id="secondHandAge" step="1" min="0" placeholder="默认 0（新房）">
-            <p class="hint">二手楼「期限 + 楼龄」≤ 50 年</p>
+            <label for="builtAt">二手楼建成日期 <span class="unit">年月 · 新房不填</span></label>
+            <input type="month" id="builtAt" min="1950-01" placeholder="新房留空">
+            <p class="hint" id="builtHint">按房屋建成（竣工）日期自动算楼龄；二手楼「期限 + 楼龄」≤ 50 年</p>
           </div>
         </div>
 
@@ -218,7 +218,6 @@
 
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">开始测算</button>
-          <button type="button" class="btn btn-ghost" id="saveBtn">保存记录</button>
         </div>
       </form>
 
@@ -226,7 +225,7 @@
       <div class="result" id="result">
         <div class="card empty">
           <p>填好左侧信息后点「开始测算」，这里会给出<br>
-          <b>能否满贷 / 需要多少商贷 / 月供与利息 / 能提取多少余额</b>。</p>
+          <b>能否满贷 / 需要多少商贷 / 逐年月供对照 / 能提取多少余额</b>。</p>
         </div>
       </div>
 

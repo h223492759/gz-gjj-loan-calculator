@@ -204,8 +204,10 @@ it('提取额度 = min(账户余额, 实际支付的首期房款)', () => {
   const r = calculate({ ...base, loanNeed: 1500000 });     // 总价 260 万，首付 110 万
   assert.strictEqual(r.withdraw.downPayment, 1100000);
   assert.strictEqual(r.withdraw.totalBalance, 148000);
-  assert.strictEqual(r.withdraw.onceLimit, 148000, '余额少于首付 → 只能提全部余额');
-  assert.strictEqual(r.withdraw.remainInAccount, 0);
+  assert.strictEqual(r.withdraw.onceLimit, 148000, '余额少于首付 → 一次性提取上限为全部余额');
+  assert.strictEqual(r.withdraw.safeLimit, 95840, '额度被最高限额卡住时，富余的余额可以提走');
+  assert.strictEqual(r.withdraw.keepBalance, 52160, '提完后还得留下撑住公式额的那部分');
+  assert.strictEqual(r.withdraw.remainInAccount, 52160);
 
   // 首付很小、余额很大的情形
   const r2 = calculate({
@@ -222,7 +224,7 @@ it('提取额度 = min(账户余额, 实际支付的首期房款)', () => {
   assert.strictEqual(r2.withdraw.remainInAccount, 500000);
 });
 
-it('期限受年龄约束：1967-09 生男职工最多 9 年（68 − 59）', () => {
+it('期限不够就自动收敛：选 30 年也只按 9 年算（不再硬拉到 30 年）', () => {
   const r = calculate({
     ...base,
     mode: 'single',
@@ -233,14 +235,41 @@ it('期限受年龄约束：1967-09 生男职工最多 9 年（68 − 59）', ()
   });
   assert.strictEqual(r.termChecks[0].age.years, 59);
   assert.strictEqual(r.maxTermAllowed, 9, `实际 ${r.maxTermAllowed}`);
+  assert.strictEqual(r.requestedTermYears, 30, '用户选的要留痕');
+  assert.strictEqual(r.termYears, 9, '生效期限必须自动收敛到上限');
+  assert.strictEqual(r.termAdjusted, true);
   assert.strictEqual(r.termOk, false);
-  assert.ok(r.warnings.some((w) => /超出可贷上限/.test(w)));
+  assert.ok(r.warnings.some((w) => /自动修正/.test(w)), '要明示「已自动修正」');
+  // 月供表必须按 9 年（108 期）出，而不是用户选的 30 年
+  assert.strictEqual(r.schedule.length, 9);
+  assert.strictEqual(r.payment.total.monthly, r.methods.find((m) => m.key === 'equal_installment').first);
 });
 
 it('二手楼：期限 + 楼龄 ≤ 50 年', () => {
   const r = calculate({ ...base, secondHandAge: 25, termYears: 30 });
   assert.strictEqual(r.maxTermAllowed, 25);
+  assert.strictEqual(r.termYears, 25, '超出上限的部分要被收敛掉');
   assert.ok(r.warnings.some((w) => /楼龄/.test(w)));
+});
+
+it('二手楼楼龄按建成（竣工）日期推算，旧的「直接给楼龄」入参仍兼容', () => {
+  // 基准日 2026-09-21，建成 2001-06 → 楼龄 25 年 → 期限上限 50 − 25 = 25 年
+  const byDate = calculate({ ...base, builtAt: '2001-06', termYears: 30 });
+  assert.strictEqual(byDate.builtAt, '2001-06');
+  assert.strictEqual(byDate.secondHandAge, 25);
+  assert.strictEqual(byDate.maxTermAllowed, 25);
+  assert.strictEqual(byDate.termYears, 25);
+
+  const legacy = calculate({ ...base, secondHandAge: 25, termYears: 30 });
+  assert.strictEqual(legacy.termYears, 25, '老入参算出来必须一致');
+  assert.strictEqual(legacy.maxTermAllowed, byDate.maxTermAllowed);
+  assert.strictEqual(legacy.maxLoanGjj, byDate.maxLoanGjj);
+
+  // 新房：不填建成日期 → 楼龄 0，期限回到 30 年上限
+  const fresh = calculate({ ...base, termYears: 30 });
+  assert.strictEqual(fresh.builtAt, null);
+  assert.strictEqual(fresh.secondHandAge, 0);
+  assert.strictEqual(fresh.termYears, 30);
 });
 
 it('收入 50% 硬约束：月供超限要报警', () => {
@@ -368,6 +397,126 @@ it('同一月内的不同「日」，退休年龄按月划档应完全相同', (
     R.retireAge('1970-05-31', 'male').retireDate,
     R.retireAge('1970-05-01', 'male').retireDate
   );
+});
+
+it('余额 / 月缴存额可以填带角分的真实数值：不丢分，额度按元向下取整', () => {
+  // 公积金账户里的余额、月缴存额本来就是 12345.67 / 320.55 这种带角分的真实数值，
+  // 输入层必须收得下；引擎只在「额度 / 贷款金额」这一步取整到元，不能反过来把输入砍掉。
+  const r = calculate({
+    asOf: '2026-09-21',
+    mode: 'single',
+    persons: [{ label: 'A', birth: '1992-06', category: 'male', balance: 12345.67, monthlyDeposit: 320.55 }],
+    loanNeed: 200000,
+    termYears: 30
+  });
+  const p1 = r.perPerson[0];
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(p1.balance, 12345.67, '余额要原样带进计算，不能被取整');
+  assert.strictEqual(p1.monthlyDeposit, 320.55, '月缴存额要原样带进计算');
+  assert.strictEqual(p1.balancePart, 123456.7, '余额 × 10 应保留到分');
+  assert.ok(near(p1.depositPart, 320.55 * p1.retire.monthsLeft, 0.011), `月缴部分=${p1.depositPart}`);
+  assert.ok(near(p1.formulaAmount, p1.balancePart + p1.depositPart, 0.011), '公式额 = 余额部分 + 月缴部分');
+  // 派生金额最多两位小数（不会出现 0.30000000000000004 这种浮点尾巴）
+  [p1.balancePart, p1.depositPart, p1.formulaAmount, r.formulaTotal].forEach((v) => {
+    assert.ok(Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, `${v} 应最多两位小数`);
+  });
+  // 额度 / 金额一律整元
+  assert.ok(Number.isInteger(r.maxLoanGjj), `可贷额应取整到元，实际 ${r.maxLoanGjj}`);
+  assert.strictEqual(r.maxLoanGjj, Math.floor(r.formulaTotal), '公式为限制项时，可贷额 = 向下取整到元');
+  assert.strictEqual(r.maxLoanGjj, 234046, '234046.45 元 → 取整到元应为 234046');
+  assert.ok(Number.isInteger(r.loanNeed), `贷款金额应为整元，实际 ${r.loanNeed}`);
+  assert.ok(Number.isInteger(r.gjjAmount) && Number.isInteger(r.commercialAmount), '公积金/商贷拆分应为整元');
+});
+
+it('带角分的余额不会把可贷额抬高（向下取整，不四舍五入）', () => {
+  const mk = (balance) => calculate({
+    asOf: '2026-09-21',
+    mode: 'single',
+    persons: [{ label: 'A', birth: '1992-06', category: 'male', balance, monthlyDeposit: 0 }],
+    loanNeed: 100000,
+    termYears: 30
+  });
+  // 余额 12345.67 → 公式 123456.7 → 可贷额 123456（不是 123457）
+  assert.strictEqual(mk(12345.67).maxLoanGjj, 123456);
+  assert.strictEqual(mk(12345.6).maxLoanGjj, 123456);
+  assert.strictEqual(mk(12345).maxLoanGjj, 123450);
+});
+
+it('可提取余额 = 提完之后仍按原额度满贷的那部分，双人按余额分摊', () => {
+  const big = calculate({
+    ...base,
+    persons: [
+      { label: 'A', birth: '1992-06', category: 'male', balance: 500000, monthlyDeposit: 3000 },
+      { label: 'B', birth: '1994-03', category: 'female_manager', balance: 400000, monthlyDeposit: 2500 }
+    ],
+    houseTotalPrice: 2000000,
+    loanNeed: 1600000
+  });
+  assert.strictEqual(big.withdraw.totalBalance, 900000, '余额合计 = 两人账户余额之和');
+  assert.strictEqual(big.withdraw.safeLimit, 400000, '被「首期房款 40 万」卡住时只能提 40 万');
+  assert.strictEqual(big.withdraw.keepBalance, 500000);
+
+  // 每人之和必须等于合计（取整零头不能凭空多出/少掉）
+  const sum = big.withdraw.perPerson.reduce((s, x) => s + x.withdrawable, 0);
+  assert.ok(Math.abs(sum - big.withdraw.safeLimit) < 0.02, `每人之和 ${sum} ≠ 合计 ${big.withdraw.safeLimit}`);
+  big.withdraw.perPerson.forEach((p, i) => {
+    const src = big.perPerson[i];
+    assert.ok(Math.abs(p.withdrawable - 0) >= 0 && p.balance >= p.withdrawable - 0.01, `${p.label} 不能超过自己的余额`);
+    assert.ok(near(p.keep, src.balance - p.withdrawable, 0.02), `${p.label} 保留额应为 余额 − 可提取`);
+  });
+  // 按余额占比分摊：50 万 : 40 万
+  const a = big.withdraw.perPerson[0];
+  assert.ok(near(a.withdrawable, 400000 * (500000 / 900000), 0.02), `实际 ${a.withdrawable}`);
+
+  // 提完之后公式额必须仍然撑得住原来的可贷额
+  const after = big.perPerson.reduce((s, p, i) =>
+    s + (p.balance - big.withdraw.perPerson[i].withdrawable) * big.withdraw.balanceMultiplier
+      + p.monthlyDeposit * p.retire.monthsLeft, 0);
+  assert.ok(after + 1 >= big.maxLoanGjj, `提完后公式额 ${after} 不该低于可贷额 ${big.maxLoanGjj}`);
+});
+
+it('额度被公式本身卡住时，为了满贷一分钱都不能提', () => {
+  const r = calculate({
+    ...base,
+    persons: [
+      { label: 'A', birth: '1992-06', category: 'male', balance: 20000, monthlyDeposit: 800 },
+      { label: 'B', birth: '1994-03', category: 'female_manager', balance: 15000, monthlyDeposit: 600 }
+    ],
+    houseTotalPrice: 5000000,
+    termYears: 30
+  });
+  assert.strictEqual(r.binding.key, 'formula', '这一例应由额度公式兜底');
+  assert.strictEqual(r.withdraw.formulaSlackBalance, 0);
+  assert.strictEqual(r.withdraw.safeLimit, 0);
+  assert.strictEqual(r.withdraw.keepBalance, r.withdraw.totalBalance, '余额必须全部留下');
+  assert.ok(r.notes.some((n) => /保证满贷/.test(n)), '要说明为什么不能提');
+});
+
+it('逐年月供对照表：最多 30 行，末期归零，逐年累加等于总额', () => {
+  const r = calculate({ ...base, termYears: 30 });
+  assert.strictEqual(r.schedule.length, 30, '30 年就 30 行');
+  const last = r.schedule[r.schedule.length - 1];
+  assert.strictEqual(last.installment.endBalance, 0, '等额本息末期必须还清');
+  assert.strictEqual(last.principal.endBalance, 0, '等额本金末期必须还清');
+
+  const mInst = r.methods.find((m) => m.key === 'equal_installment');
+  const mPrin = r.methods.find((m) => m.key === 'equal_principal');
+  const sumInst = r.schedule.reduce((s, x) => s + x.installment.yearPay, 0);
+  const sumPrin = r.schedule.reduce((s, x) => s + x.principal.yearPay, 0);
+  assert.ok(near(sumInst, mInst.totalPay, 0.1), `等额本息逐年合计 ${sumInst} ≈ 总额 ${mInst.totalPay}`);
+  assert.ok(near(sumPrin, mPrin.totalPay, 0.1), `等额本金逐年合计 ${sumPrin} ≈ 总额 ${mPrin.totalPay}`);
+
+  // 等额本息月供恒定；等额本金逐月递减且前期更高
+  assert.strictEqual(r.schedule[0].installment.first, last.installment.last, '等额本息月供全程不变');
+  assert.ok(r.schedule[0].principal.first > last.principal.last, '等额本金应递减');
+  assert.ok(r.schedule[0].principal.first > r.schedule[0].installment.first, '首月等额本金压力更大');
+
+  // 期限被收敛时行数跟着变，绝不会按用户选的年限出表
+  const shortTerm = calculate({ ...base, termYears: 5 });
+  assert.strictEqual(shortTerm.schedule.length, 5);
+  // 中间年份都是 12 期，不会凭空多出或漏掉
+  assert.strictEqual(r.schedule[0].monthCount, 12);
+  assert.strictEqual(last.monthCount, 12);
 });
 
 /* ------------------------------ 执行 ------------------------------ */

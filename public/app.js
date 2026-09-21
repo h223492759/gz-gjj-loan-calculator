@@ -53,9 +53,13 @@ function wan(v, digits) {
   const d = digits == null ? 2 : digits;
   return (num(v) / 10000).toFixed(d);
 }
-/** 元 → 千分位整数 */
+/**
+ * 元 → 千分位。
+ * 余额 / 月缴存额允许填带角分的真实数值（如 123456.78），
+ * 所以有角分就显示到分、是整数就还是整数，不能把用户填的数四舍五入掉。
+ */
 function yuan(v) {
-  return Math.round(num(v)).toLocaleString('zh-CN');
+  return num(v).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 /** 小数 → 百分比字符串 */
 function pct(v, digits) {
@@ -305,11 +309,11 @@ function buildPersonBoxes(mode, preset) {
         </div>
         <div>
           <label>已有公积金余额 <span class="unit">元</span></label>
-          <input type="number" class="p-balance" min="0" step="100" value="${p.balance != null ? p.balance : ''}" placeholder="如 ${esc(e.balance)}">
+          <input type="number" class="p-balance" min="0" step="0.01" inputmode="decimal" value="${p.balance != null ? p.balance : ''}" placeholder="如 ${esc(e.balance)}（可到分）">
         </div>
         <div>
           <label>每月缴存额 <span class="unit">元</span></label>
-          <input type="number" class="p-deposit" min="0" step="10" value="${p.monthlyDeposit != null ? p.monthlyDeposit : ''}" placeholder="如 ${esc(e.deposit)}">
+          <input type="number" class="p-deposit" min="0" step="0.01" inputmode="decimal" value="${p.monthlyDeposit != null ? p.monthlyDeposit : ''}" placeholder="如 ${esc(e.deposit)}（可到分）">
         </div>
       </div>`;
     box.appendChild(div);
@@ -371,7 +375,7 @@ function collect() {
     childPolicy: $('#childPolicy').value,
     qualityPolicy: $('#qualityPolicy').value,
     isAffordableHousing: $('#isAffordableHousing').checked,
-    secondHandAge: num($('#secondHandAge').value),
+    builtAt: ($('#builtAt').value || '').trim() || null,
     familyMonthlyIncome: num($('#familyMonthlyIncome').value),
     commercialRate: state.commercialRate,
     customRates: state.rates.slice(),
@@ -388,7 +392,7 @@ function fill(payload) {
   $('#loanNeed').value = p.loanNeed ? (num(p.loanNeed) / 10000) : '';
   $('#houseTotalPrice').value = p.houseTotalPrice ? (num(p.houseTotalPrice) / 10000) : '';
   $('#downRatio').value = p.downRatio != null ? p.downRatio : 20;
-  $('#secondHandAge').value = p.secondHandAge != null ? p.secondHandAge : 0;
+  $('#builtAt').value = p.builtAt || '';
   $('#termYears').value = p.termYears != null ? Math.min(30, p.termYears) : 30;
   $('#termEcho').textContent = $('#termYears').value;
   $('#familyMonthlyIncome').value = p.familyMonthlyIncome || '';
@@ -422,7 +426,7 @@ function updateDownHint() {
 
 const EMPTY_RESULT_HTML = `<div class="card empty">
   <p>填好左侧信息后点「开始测算」，这里会给出<br>
-  <b>能否满贷 / 需要多少商贷 / 月供与利息 / 能提取多少余额</b>。</p>
+  <b>能否满贷 / 需要多少商贷 / 逐年月供对照 / 能提取多少余额</b>。</p>
 </div>`;
 
 function renderEmptyState() {
@@ -433,7 +437,7 @@ function renderEmptyState() {
 /**
  * 首次进入与「重置」都走这里：输入框一律留空，只在灰色占位文字里给示例值 ——
  * 省掉「先删掉预填的默认值再输入」这一步。留空时与服务端默认口径一致
- * （首付 20%、楼龄 0、期限 30 年），所以结果与「手动填默认值」完全相同。
+ * （首付 20%、无二手楼建成日期、期限 30 年），所以结果与「手动填默认值」完全相同。
  */
 function initBlankForm() {
   const d = (state.meta && state.meta.defaultInput) || {};
@@ -452,7 +456,7 @@ function initBlankForm() {
   $('#houseTotalPrice').value = '';
   if (d.houseTotalPrice) $('#houseTotalPrice').placeholder = `如 ${wanOf(d.houseTotalPrice)}；选填，填了才能算首付与提取额`;
   $('#downRatio').value = '';
-  $('#secondHandAge').value = '';
+  $('#builtAt').value = '';
   $('#termYears').value = 30;
   $('#termEcho').textContent = '30';
   $('#familyMonthlyIncome').value = '';
@@ -490,8 +494,6 @@ function syncEditingUi() {
   if (banner) banner.hidden = !on;
   const nm = $('#editName');
   if (nm) nm.textContent = state.editingName || '';
-  const btn = $('#saveBtn');
-  if (btn) btn.textContent = on ? '保存修改（覆盖）' : '保存记录';
 }
 
 /** 一条记录的「输入摘要」——记录页与顶部最近卡片共用同一套文案 */
@@ -572,6 +574,8 @@ async function runCalc(opts) {
     if (!o.quiet) {
       const box = $('#result');
       if (window.innerWidth < 1024) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // 只有主动点「开始测算」才落库；切换选项触发的自动重算（quiet）不重复保存
+      await saveRecord({ auto: true });
     }
   } catch (e) {
     $('#result').innerHTML = `<div class="card"><div class="alert alert-bad">${esc(e.message)}</div></div>`;
@@ -608,6 +612,7 @@ function render(r) {
       需要贷款 <b>${wan(r.loanNeed)} 万</b> →
       公积金可贷 <b>${wan(r.gjjAmount)} 万</b>${r.commercialAmount > 0 ? `，缺口 <b>${wan(r.commercialAmount)} 万</b> 需走商贷` : '，<b>无需商贷</b>'}
     </div>
+    ${r.termAdjusted ? `<div class="verdict-line">⚠️ 期限已按政策上限自动修正为 <b>${r.termYears} 年</b>（你选的是 ${r.requestedTermYears} 年）</div>` : ''}
   </div>`;
 
   /* ---- 关键数字 ---- */
@@ -616,9 +621,11 @@ function render(r) {
     ${kpi(r.commercialAmount > 0 ? '需商贷金额' : '商贷金额', wan(r.commercialAmount), ' 万')}
     ${kpi('首月月供', yuan(t.first), ' 元')}
     ${kpi('贷款总利息', wan(t.totalInterest), ' 万')}
-    ${kpi('能提取的余额', wan(r.withdraw.onceLimit), ' 万')}
+    ${kpi('账户余额合计', wan(r.withdraw.totalBalance), ' 万')}
+    ${kpi('能提取的余额', wan(r.withdraw.safeLimit), ' 万', true)}
     ${kpi('每月自付现金', yuan(r.cashflow.cashMonthly), ' 元')}
-  </div>`;
+  </div>
+  <p class="muted" style="margin-top:8px">「能提取的余额」= 提完之后公积金仍按 <b>${yuan(r.maxLoanGjj)} 元</b> 满贷的额度，同时不超过已付首期房款 ${yuan(r.withdraw.downPayment)} 元${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}。</p>`;
 
   /* ---- 预算上限：哪个约束卡住了 ---- */
   const pctOfCap = r.maxLoanGjj > 0 ? [
@@ -669,19 +676,22 @@ function render(r) {
     <p class="swipe-hint">← 表格可左右滑动 →</p>
     <p class="muted" style="margin-top:8px">当前方案：公积金 @${pct(r.rate.gjj, 3)}（${esc(r.rate.gjjTermBand)}），商贷 @${pct(r.rate.commercial, 3)}。${esc(state.meta.commercial.presets_note)}</p>`;
 
-  /* ---- 还款方式差异 ---- */
-  html += `<div class="sec-title">不同还款方式的差异</div>
+  /* ---- 还款方式差异 + 逐年月供对照表 ---- */
+  const sch = (r.schedule || []);
+  const mInst = (r.methods || []).find((x) => x.key === 'equal_installment') || {};
+  const mPrin = (r.methods || []).find((x) => x.key === 'equal_principal') || {};
+  html += `<div class="sec-title">两种还款方式：月供与最终总额对比</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>还款方式</th><th>首月月供</th><th>末月月供</th><th>总利息</th><th>比等额本息</th></tr></thead>
+        <thead><tr><th>还款方式</th><th>首月月供</th><th>末月月供</th><th>本息合计</th><th>总利息</th><th>比等额本息</th></tr></thead>
         <tbody>
           ${(r.methods || []).map((m) => {
-            const base = (r.methods || []).find((x) => x.key === 'equal_installment') || { totalInterest: 0 };
-            const diff = m.totalInterest - base.totalInterest;
+            const diff = m.totalInterest - (mInst.totalInterest || 0);
             return `<tr class="${m.key === r.method ? 'hl' : ''}">
               <td>${esc(m.label)}${m.key === r.method ? '（当前）' : ''}</td>
               <td>${yuan(m.first)}</td>
               <td>${yuan(m.last)}</td>
+              <td>${wan(m.totalPay)} 万</td>
               <td>${wan(m.totalInterest)} 万</td>
               <td>${diff === 0 ? '—' : `${diff < 0 ? '省' : '多'} ${wan(Math.abs(diff))} 万`}</td>
             </tr>`;
@@ -691,14 +701,59 @@ function render(r) {
     </div>
     <p class="swipe-hint">← 表格可左右滑动 →</p>`;
 
+  if (sch.length) {
+    const totalTerms = sch.reduce((s, x) => s + x.monthCount, 0);
+    html += `<div class="sec-title">逐年月供对照表（${r.termYears} 年 · 共 ${totalTerms} 期 · 两种方式并列）</div>
+    <div class="table-wrap">
+      <table style="min-width:880px">
+        <thead>
+          <tr>
+            <th rowspan="2">年度</th>
+            <th colspan="3">等额本息${r.method === 'equal_installment' ? '（当前）' : ''}</th>
+            <th colspan="3">等额本金${r.method === 'equal_principal' ? '（当前）' : ''}</th>
+          </tr>
+          <tr>
+            <th>月供</th><th>当年还款</th><th>年末剩余本金</th>
+            <th>月供（首 → 末）</th><th>当年还款</th><th>年末剩余本金</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sch.map((row) => `<tr>
+            <td>第 ${row.year} 年<small>${row.monthCount} 期</small></td>
+            <td>${yuan(row.installment.first)}</td>
+            <td>${yuan(row.installment.yearPay)}</td>
+            <td>${yuan(row.installment.endBalance)}</td>
+            <td>${yuan(row.principal.first)} → ${yuan(row.principal.last)}</td>
+            <td>${yuan(row.principal.yearPay)}</td>
+            <td>${yuan(row.principal.endBalance)}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot>
+          <tr class="hl">
+            <td>合计</td>
+            <td>—</td>
+            <td>${yuan(mInst.totalPay || 0)}</td>
+            <td>利息 ${wan(mInst.totalInterest || 0)} 万</td>
+            <td>—</td>
+            <td>${yuan(mPrin.totalPay || 0)}</td>
+            <td>利息 ${wan(mPrin.totalInterest || 0)} 万</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <p class="swipe-hint">← 表格可左右滑动 →</p>
+    <p class="muted" style="margin-top:8px">等额本息每月 ${yuan(mInst.monthly || 0)} 元始终不变，前期还的多是利息；等额本金首月 ${yuan(mPrin.first || 0)} 元、每月递减到末月 ${yuan(mPrin.last || 0)} 元，总利息更少但前期压力大。</p>`;
+  }
+
   /* ---- 提取与现金流 ---- */
   html += `<div class="sec-title">余额提取与每月现金流</div>
     <div class="rows">
       <div class="row"><span class="rk">实际支付的首期房款</span><span class="rv">${yuan(r.withdraw.downPayment)} 元<small>总价 ${wan(r.totalPrice)} 万 − 贷款 ${wan(r.loanNeed)} 万${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}</small></span></div>
-      <div class="row"><span class="rk">两人账户余额合计</span><span class="rv">${yuan(r.withdraw.totalBalance)} 元</span></div>
-      <div class="row"><span class="rk">按月还贷期间可一次性提取</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>取「余额」与「首期房款」中的较小值</small></span></div>
-      ${(r.withdraw.perPerson || []).map((p) => `<div class="row"><span class="rk">· ${esc(p.label)}</span><span class="rv">${yuan(p.withdrawable)} 元<small>账户余额 ${yuan(p.balance)} 元</small></span></div>`).join('')}
-      <div class="row"><span class="rk">提取后仍留在账户里的余额</span><span class="rv">${yuan(r.withdraw.remainInAccount)} 元<small>用于每月自动冲还贷</small></span></div>
+      <div class="row"><span class="rk">${r.mode === 'couple' ? '两人' : '本人'}账户余额合计</span><span class="rv">${yuan(r.withdraw.totalBalance)} 元</span></div>
+      <div class="row"><span class="rk">能提取的余额<small>提取后仍按 ${yuan(r.maxLoanGjj)} 元满贷</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalance)}」三者最小值</small></span></div>
+      <div class="row"><span class="rk">为保住满贷须留在账户里的余额</span><span class="rv">${yuan(r.withdraw.keepBalance)} 元<small>余额 ×${r.withdraw.balanceMultiplier} 计入额度公式，少了这块钱额度就从 ${yuan(r.maxLoanGjj)} 元往下掉</small></span></div>
+      ${(r.withdraw.perPerson || []).map((p) => `<div class="row"><span class="rk">· ${esc(p.label)}</span><span class="rv">可提取 ${yuan(p.withdrawable)} 元<small>账户余额 ${yuan(p.balance)} 元 − 须保留 ${yuan(p.keep)} 元</small></span></div>`).join('')}
+      <div class="row"><span class="rk">政策一次性提取上限</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>不超过实际支付的首期房款，也不超过账户余额</small></span></div>
       <div class="row"><span class="rk">该套住房提取总额上限</span><span class="rv">${yuan(r.withdraw.totalLimit)} 元<small>不超过实际支付的购房本息</small></span></div>
       <div class="row"><span class="rk">每月缴存合计</span><span class="rv">${yuan(r.cashflow.monthlyDeposit)} 元</span></div>
       <div class="row"><span class="rk">每月自掏现金</span><span class="rv">${yuan(r.cashflow.cashMonthly)} 元</span></div>
@@ -711,7 +766,8 @@ function render(r) {
   /* ---- 校验 ---- */
   html += `<div class="sec-title">期限与收入校验</div>
     <div class="rows">
-      <div class="row"><span class="rk">可贷期限上限</span><span class="rv">${r.maxTermAllowed} 年<small>受 30 年上限、年龄、楼龄共同约束</small></span></div>
+      <div class="row"><span class="rk">可贷期限上限</span><span class="rv">${r.maxTermAllowed} 年<small>受 30 年上限、年龄、二手楼楼龄共同约束</small></span></div>
+      ${r.secondHandAge > 0 ? `<div class="row"><span class="rk">二手楼楼龄</span><span class="rv">${r.secondHandAge} 年<small>${esc(r.builtAt || '')} 建成；「期限 + 楼龄」≤ 50 年 → 期限最多 ${Math.max(0, Math.min(r.maxTermAllowed, 50 - r.secondHandAge))} 年</small></span></div>` : ''}
       ${(r.termChecks || []).map((c) => `<div class="row"><span class="rk">· ${esc(c.label)}</span><span class="rv">年龄 ${c.age.years} 岁 ${c.age.remMonths} 个月<small>不超 ${c.limitAge} 岁 → 最多可贷 ${c.years} 年</small></span></div>`).join('')}
       ${r.income ? `
         <div class="row"><span class="rk">月还贷额 / 家庭收入 50% 上限</span>
@@ -740,12 +796,11 @@ function render(r) {
   </details>`;
 
   html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-    <button type="button" class="btn btn-primary" id="resultSaveBtn">保存这条记录</button>
     <button type="button" class="btn btn-ghost" id="printBtn">打印 / 存 PDF</button>
-  </div>`;
+  </div>
+  <p class="muted" style="margin-top:8px">本次测算已自动存入「全部记录」，可直接去记录页改名 / 复制 / 删除。</p>`;
 
   $('#result').innerHTML = html;
-  $('#resultSaveBtn').addEventListener('click', () => saveRecord());
   $('#printBtn').addEventListener('click', () => window.print());
 
   const th = $('#termHint');
@@ -773,7 +828,7 @@ async function loadRecords() {
 function renderRecords() {
   const box = $('#recordList');
   if (!state.records.length) {
-    box.innerHTML = '<div class="empty-note">还没有记录。测算完成后点「保存记录」即可留存。</div>';
+    box.innerHTML = '<div class="empty-note">还没有记录。点一次「开始测算」就会自动存到这里。</div>';
     return;
   }
   box.innerHTML = state.records.map((r) => `
@@ -860,8 +915,27 @@ async function handleRecordAction(act, rec, el) {
   }
 }
 
-async function saveRecord(name) {
-  if (!state.lastResult || state.lastResult.ok === false) return toast('请先测算一次');
+/** 默认记录名：双人 200 万 / 30 年 · 09-21 12:03 */
+function defaultRecordName() {
+  const r = state.lastResult || {};
+  const p2 = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  const ts = `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  return `${state.mode === 'couple' ? '双人' : '单人'} ${wan(r.loanNeed || 0)} 万 / ${r.termYears || 0} 年 · ${ts}`;
+}
+
+/**
+ * 保存记录。
+ * - 编辑态（从「复制修改」进来）：覆盖那条记录；
+ * - 自动保存（点「开始测算」）：用默认名字，入参与已有某条记录完全相同时不重复建；
+ * - 手动调用：仍弹输入框让用户起名。
+ */
+async function saveRecord(opts) {
+  const o = opts || {};
+  if (!state.lastResult || state.lastResult.ok === false) {
+    if (!o.auto) toast('请先测算一次');
+    return null;
+  }
 
   // 编辑态（从「复制修改」进来）：直接覆盖那条记录，不再新建
   if (state.editingId) {
@@ -875,25 +949,36 @@ async function saveRecord(name) {
     } catch (e) {
       toast(e.message, 3200);
     }
-    return;
+    return null;
   }
 
-  let finalName = name;
+  const payload = collect();
+  const json = JSON.stringify(payload);
+  const dup = (state.records || []).find((r) => JSON.stringify(r.payload) === json);
+  if (o.auto && dup) return dup;   // 连点「开始测算」不会刷出一串一样的记录
+
+  let finalName = o.name;
   if (finalName === undefined) {
-    const guess = `${state.mode === 'couple' ? '双人' : '单人'} ${wan(state.lastResult.loanNeed)} 万 / ${state.lastResult.termYears} 年`;
-    finalName = window.prompt('给这条记录起个名字（可随时更名）', guess);
-    if (finalName === null) return;
-    finalName = finalName.trim() || guess;
+    if (o.auto) {
+      finalName = defaultRecordName();
+    } else {
+      const guess = `${state.mode === 'couple' ? '双人' : '单人'} ${wan(state.lastResult.loanNeed)} 万 / ${state.lastResult.termYears} 年`;
+      finalName = window.prompt('给这条记录起个名字（可随时更名）', guess);
+      if (finalName === null) return null;
+      finalName = finalName.trim() || guess;
+    }
   }
   try {
     await api('/api/records', {
       method: 'POST',
-      body: JSON.stringify({ name: finalName, payload: collect() })
+      body: JSON.stringify({ name: finalName, payload })
     });
-    toast('已保存到本地记录');
+    toast(o.auto ? `已自动保存为「${finalName}」` : '已保存到本地记录');
     await loadRecords();
+    return null;
   } catch (e) {
     toast(e.message, 3200);
+    return null;
   }
 }
 
@@ -1249,7 +1334,6 @@ function bindEvents() {
     e.preventDefault();
     runCalc();
   });
-  $('#saveBtn').addEventListener('click', () => saveRecord());
   $('#resetBtn').addEventListener('click', () => {
     initBlankForm();
     toast('已清空表单，按灰色提示填写即可');

@@ -20,6 +20,14 @@ const R = require('./rules');
 const yuan = (v) => Math.round(v * 100) / 100;
 const MIN = 1e-6;
 
+/**
+ * 金额取整到「元」。
+ * 余额、月缴存额允许填带角分的真实数值（公积金账户里本来就是 86000.55 这种），
+ * 但贷款额度、贷款金额都是按整元计的，所以只在「额度/金额」这一步向下取整，
+ * 既不丢用户的输入精度，也不会因为零点几元把额度抬高。
+ */
+const yuanFloor = (v) => Math.floor(yuan(Number(v) || 0));
+
 /* ============================ 还款计算 ============================ */
 
 /** 等额本息 / 等额本金 */
@@ -120,7 +128,8 @@ function calculate(input) {
     return { ok: false, error: '请至少填写一位借款人的出生年月', asOf, warnings, notes };
   }
 
-  const loanNeed = Math.max(0, Number(input.loanNeed) || 0);
+  // 贷款金额按整元计（填「万元」时可能出现不足 1 元的零头）
+  const loanNeed = Math.max(0, Math.floor(Number(input.loanNeed) || 0));
   if (!(loanNeed > 0)) {
     return { ok: false, error: '请填写需要贷款的金额', asOf, warnings, notes };
   }
@@ -136,8 +145,18 @@ function calculate(input) {
   }
 
   const method = input.repayment === 'equal_principal' ? 'equal_principal' : 'equal_installment';
-  const termYears = Math.max(1, Math.min(50, Math.round(Number(input.termYears) || 30)));
-  const secondHandAge = Math.max(0, Number(input.secondHandAge) || 0);
+  // 用户选的期限 vs 实际生效期限：选了 30 年但年龄/楼龄不够时，第 5 步会自动收敛
+  const requestedTermYears = Math.max(1, Math.min(50, Math.round(Number(input.termYears) || 30)));
+  let termYears = requestedTermYears;
+
+  // 二手楼楼龄：优先按「建成（竣工）日期」推算；直接给年限也兼容（老记录 / API 直调）
+  let secondHandAge = Math.max(0, Number(input.secondHandAge) || 0);
+  let builtAt = null;
+  if (input.builtAt && R.parseYM(input.builtAt)) {
+    builtAt = String(input.builtAt).trim();
+    const ag = R.ageAt(builtAt, asOf);
+    if (ag) secondHandAge = ag.years;
+  }
   const familyIncome = Math.max(0, Number(input.familyMonthlyIncome) || 0);
   const commercialRate = Number.isFinite(Number(input.commercialRate)) && Number(input.commercialRate) > 0
     ? Number(input.commercialRate) / (Number(input.commercialRate) > 1 ? 100 : 1)
@@ -200,7 +219,8 @@ function calculate(input) {
   if (priceGiven) candidates.push({ key: 'price', label: '购房总价 ×（1 − 首付比例）', value: priceCap });
 
   const binding = candidates.reduce((a, b) => (b.value < a.value ? b : a));
-  const maxLoanGjj = Math.max(0, yuan(binding.value));
+  // 可贷额按元向下取整：余额带角分时公式额也可能是小数，但额度不会报到「分」
+  const maxLoanGjj = Math.max(0, yuanFloor(binding.value));
 
   /* ---------------- 5. 期限校验 ---------------- */
   const byAge = perPerson.map((p) => {
@@ -212,10 +232,29 @@ function calculate(input) {
   const secondHandCap = secondHandAge > 0 ? cfg.loan.second_hand_age_plus_term - secondHandAge : Infinity;
   const maxTermAllowed = Math.max(0, Math.min(cfg.loan.max_term_years, ageCap, secondHandCap));
 
-  const termOk = termYears <= maxTermAllowed;
-  if (!termOk) {
-    warnings.push(`所填期限 ${termYears} 年超出可贷上限 ${maxTermAllowed} 年（受年龄/楼龄/30 年上限约束）。`);
+  // 自动收敛：选了 30 年但年龄/楼龄撑不到，就按上限算，别硬拉到 30 年
+  let termAdjusted = false;
+  if (termYears > maxTermAllowed) {
+    termYears = maxTermAllowed;
+    termAdjusted = true;
+    const parts = [];
+    if (ageCap <= maxTermAllowed) {
+      const who = byAge.find((x) => x.years === ageCap);
+      parts.push(who
+        ? `${who.label}${who.age.years} 岁，期限 + 年龄不超 ${who.limitAge} 岁 → 最多 ${who.years} 年`
+        : `年龄约束最多 ${ageCap} 年`);
+    }
+    if (secondHandAge > 0 && secondHandCap <= maxTermAllowed) {
+      parts.push(`二手楼「期限 + 楼龄 ${secondHandAge} 年」≤ ${cfg.loan.second_hand_age_plus_term} 年`);
+    }
+    warnings.push(
+      `贷款期限按政策自动修正为你能贷的最长 ${maxTermAllowed} 年（不是你选的 ${requestedTermYears} 年）：${parts.join('；')}。`
+    );
+    if (maxTermAllowed <= 0) {
+      warnings.push('本情形已无可贷期限（按上述约束算下来为 0 年），月供与利息均为 0，需要更换借款人或缩短用房年限。');
+    }
   }
+  const termOk = termYears > 0 && !termAdjusted;
   if (secondHandAge > 0 && termYears + secondHandAge > cfg.loan.second_hand_age_plus_term) {
     warnings.push(`二手楼「贷款期限 + 楼龄」= ${termYears + secondHandAge} 年，超过 ${cfg.loan.second_hand_age_plus_term} 年上限。`);
   }
@@ -266,31 +305,54 @@ function calculate(input) {
     notes.push('未填写家庭月收入，已跳过「月还贷额 ≤ 家庭月收入 50%」这一硬性校验。');
   }
 
-  /* ---------------- 9. 提取额度 ---------------- */
+  /* ---------------- 9. 余额提取 ---------------- */
+  const mult = cfg.loan.balance_multiplier;   // 账户余额 ×10
   const downPayment = yuan(Math.max(0, totalPrice - loanNeed));
   const totalBalance = yuan(perPerson.reduce((s, p) => s + p.balance, 0));
-  const withdrawOnce = yuan(Math.min(totalBalance, downPayment));
+
+  // 政策口径的一次性提取上限：不超过实际支付的首期房款，也不超过账户余额
+  const onceLimit = yuan(Math.min(totalBalance, downPayment));
+
+  // 「提取后仍满贷」的可提取额：
+  //   提取后的公式额 = Σ[(余额 − 提取额) × 10] + Σ(月缴存额 × 到退休月数)
+  //   只要它还 ≥ 当前可贷额 maxLoanGjj，额度就不掉 ⇒
+  //   可动用余额 = (公式额合计 − 可贷额) ÷ 10，再受「账户余额」「首期房款」封顶。
+  //   （当额度被公式本身卡住时差额≈0，也就是为了满贷一分钱都不能提。）
+  const formulaSlackBalance = Math.max(0, yuan((formulaTotal - maxLoanGjj) / mult));
+  const safeLimit = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
+  const share = totalBalance > 0 ? totalBalance : 1;
+  const safePer = perPerson.map((p) => {
+    const own = totalBalance > 0 ? yuan(safeLimit * (p.balance / share)) : 0;
+    return { label: p.label, balance: p.balance, withdrawable: own, keep: yuan(p.balance - own) };
+  });
+  const sumSafe = yuan(safePer.reduce((s, x) => s + x.withdrawable, 0));
+  if (safePer.length && Math.abs(sumSafe - safeLimit) > 0.005) {
+    // 取整零头落到最后一个人的额度上，保证「每人可提取之和 = 可提取合计」
+    const last = safePer[safePer.length - 1];
+    last.withdrawable = yuan(Math.max(0, last.withdrawable + yuan(safeLimit - sumSafe)));
+    last.keep = yuan(last.balance - last.withdrawable);
+  }
+  const keepBalance = yuan(totalBalance - safeLimit);
+
   const withdraw = {
     downPayment,
     totalBalance,
-    onceLimit: withdrawOnce,
-    remainInAccount: yuan(totalBalance - withdrawOnce),
+    onceLimit,
+    balanceMultiplier: mult,
+    formulaSlackBalance,
+    bindingKey: binding.key,
+    safeLimit,
+    keepBalance,
+    remainInAccount: keepBalance,
     totalLimit: yuan(totalPrice + total.totalInterest),
-    perPerson: (() => {
-      let left = withdrawOnce;
-      const out = [];
-      const share = totalBalance > 0 ? totalBalance : 1;
-      perPerson.forEach((p) => {
-        const own = totalBalance > 0 ? yuan(withdrawOnce * (p.balance / share)) : 0;
-        const v = Math.min(own, left);
-        left = yuan(left - v);
-        out.push({ label: p.label, balance: p.balance, withdrawable: v });
-      });
-      if (left > 0 && out.length) out[out.length - 1].withdrawable = yuan(out[out.length - 1].withdrawable + left);
-      return out;
-    })(),
+    perPerson: safePer,
     note: cfg.withdraw.once_limit
   };
+  if (binding.key === 'formula') {
+    notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元，因此为保证满贷，当前可提取额为 ${yuan(safeLimit).toLocaleString('zh-CN')} 元。`);
+  } else if (safeLimit > 0) {
+    notes.push(`可贷额已被「${binding.label}」卡住，账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元且不影响 ${yuan(maxLoanGjj).toLocaleString('zh-CN')} 元的公积金可贷额。`);
+  }
 
   /* ---------------- 10. 月度现金流（公积金账户抵扣） ---------------- */
   const monthlyDeposit = yuan(perPerson.reduce((s, p) => s + p.monthlyDeposit, 0));
@@ -341,6 +403,9 @@ function calculate(input) {
   const plans = buildPlans({
     rates, loanNeed, maxLoanGjj, gr, termYears, months, method, cfg
   });
+  const schedule = buildSchedule({
+    gjjAmount, commercialAmount, gjjRate: gr.rate, commRate: commercialRate, months
+  });
   const methods = buildMethods({ gjjAmount, commercialAmount, gr, commercialRate, months, cfg });
 
   /* ---------------- 12. 参数时效 ---------------- */
@@ -356,6 +421,10 @@ function calculate(input) {
     isAffordableHousing: isAffordable,
     method,
     termYears,
+    requestedTermYears,
+    termAdjusted,
+    builtAt,
+    secondHandAge,
     maxTermAllowed,
     termOk,
     downRatio,
@@ -390,6 +459,7 @@ function calculate(input) {
     cashflow,
     plans,
     methods,
+    schedule,
     termChecks: byAge,
     warnings,
     notes,
@@ -454,6 +524,76 @@ function summarize(gjjAmount, commAmount, gjjRate, commRate, months, method) {
   };
 }
 
+/** 等额本息的每月应还（与 payment() 同一口径，不受四舍五入影响） */
+function fixedMonthly(P, i, months) {
+  if (!(P > 0) || !(months > 0)) return 0;
+  if (i <= MIN) return P / months;
+  const p = Math.pow(1 + i, months);
+  return (P * i * p) / (p - 1);
+}
+
+/**
+ * 逐年月供对照表（公积金 + 商贷合并为一笔现金流）
+ * 把等额本息与等额本金放在同一张表里：每年一行，最多 30 行。
+ * 行字段：该年月供（首/末）、全年还款、全年利息、年末剩余本金。
+ */
+function buildSchedule({ gjjAmount, commercialAmount, gjjRate, commRate, months }) {
+  const rows = [];
+  if (!(months > 0) || !(gjjAmount + commercialAmount > 0)) return rows;
+
+  const seriesFor = (method) => {
+    const iG = gjjRate / 12;
+    const iC = (commRate || 0) / 12;
+    const mG = method === 'equal_installment' ? fixedMonthly(gjjAmount, iG, months) : 0;
+    const mC = method === 'equal_installment' ? fixedMonthly(commercialAmount, iC, months) : 0;
+    const per = method === 'equal_principal';
+    const prG = per ? gjjAmount / months : 0;
+    const prC = per ? commercialAmount / months : 0;
+
+    let balG = gjjAmount;
+    let balC = commercialAmount;
+    const monthsRows = [];
+    for (let k = 1; k <= months; k++) {
+      const intG = balG * iG;
+      const intC = balC * iC;
+      const payG = per ? prG + intG : Math.min(mG, balG + intG);
+      const payC = per ? prC + intC : Math.min(mC, balC + intC);
+      const cutG = payG - intG;
+      const cutC = payC - intC;
+      balG = Math.max(0, balG - cutG);
+      balC = Math.max(0, balC - cutC);
+      monthsRows.push({ pay: payG + payC, interest: intG + intC, bal: balG + balC });
+    }
+
+    const years = Math.ceil(months / 12);
+    const out = [];
+    for (let y = 1; y <= years; y++) {
+      const slice = monthsRows.slice((y - 1) * 12, y * 12);
+      if (!slice.length) continue;
+      out.push({
+        first: yuan(slice[0].pay),
+        last: yuan(slice[slice.length - 1].pay),
+        yearPay: yuan(slice.reduce((s, x) => s + x.pay, 0)),
+        interest: yuan(slice.reduce((s, x) => s + x.interest, 0)),
+        endBalance: yuan(Math.abs(slice[slice.length - 1].bal) < 0.01 ? 0 : slice[slice.length - 1].bal)
+      });
+    }
+    return out;
+  };
+
+  const inst = seriesFor('equal_installment');
+  const prin = seriesFor('equal_principal');
+  inst.forEach((r, i) => {
+    rows.push({
+      year: i + 1,
+      monthCount: Math.min(12, months - i * 12),
+      installment: r,
+      principal: prin[i]
+    });
+  });
+  return rows;
+}
+
 /** 同一笔贷款下，等额本息 vs 等额本金 */
 function buildMethods({ gjjAmount, commercialAmount, gr, commercialRate, months, cfg }) {
   return [
@@ -465,4 +605,4 @@ function buildMethods({ gjjAmount, commercialAmount, gr, commercialRate, months,
   });
 }
 
-module.exports = { calculate, payment, principalByPayment, summarize };
+module.exports = { calculate, payment, principalByPayment, summarize, buildSchedule };

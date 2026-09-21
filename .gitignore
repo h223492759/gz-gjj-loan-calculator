@@ -4,6 +4,7 @@ data/*
 data-test/
 data-preview/
 data-replay/
+data-verify*/
 *.sqlite
 *.sqlite3
 *.db
