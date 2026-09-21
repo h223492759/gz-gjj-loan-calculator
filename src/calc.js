@@ -313,12 +313,12 @@ function calculate(input) {
   // 政策口径的一次性提取上限：不超过实际支付的首期房款，也不超过账户余额
   const onceLimit = yuan(Math.min(totalBalance, downPayment));
 
-  // 「提取后仍满贷」的可提取额：
+  // 「提取后本次仍贷得下来」的可提取额：
   //   提取后的公式额 = Σ[(余额 − 提取额) × 10] + Σ(月缴存额 × 到退休月数)
-  //   只要它还 ≥ 当前可贷额 maxLoanGjj，额度就不掉 ⇒
-  //   可动用余额 = (公式额合计 − 可贷额) ÷ 10，再受「账户余额」「首期房款」封顶。
-  //   （当额度被公式本身卡住时差额≈0，也就是为了满贷一分钱都不能提。）
-  const formulaSlackBalance = Math.max(0, yuan((formulaTotal - maxLoanGjj) / mult));
+  //   只要它还 ≥ 本次实际要贷的金额 gjjAmount，这次就贷得下来 ⇒
+  //   可动用余额 = (公式额合计 − 本次贷款额) ÷ 10，再受「账户余额」「首期房款」封顶。
+  //   （口径说明：按「本次实际需要」而非「最高可贷上限」，不做保留追加贷款能力的保守折算。）
+  const formulaSlackBalance = Math.max(0, yuan((formulaTotal - gjjAmount) / mult));
   const safeLimit = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
   const share = totalBalance > 0 ? totalBalance : 1;
   const safePer = perPerson.map((p) => {
@@ -348,10 +348,10 @@ function calculate(input) {
     perPerson: safePer,
     note: cfg.withdraw.once_limit
   };
-  if (binding.key === 'formula') {
-    notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元，因此为保证满贷，当前可提取额为 ${yuan(safeLimit).toLocaleString('zh-CN')} 元。`);
-  } else if (safeLimit > 0) {
-    notes.push(`可贷额已被「${binding.label}」卡住，账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元且不影响 ${yuan(maxLoanGjj).toLocaleString('zh-CN')} 元的公积金可贷额。`);
+  if (safeLimit > 0) {
+    notes.push(`账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元，提取后额度公式仍有 ${yuan(formulaTotal - safeLimit * mult).toLocaleString('zh-CN')} 元，不低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元。`);
+  } else if (binding.key === 'formula') {
+    notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元；本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元已把公式额用尽，因此当前可提取额为 0。`);
   }
 
   /* ---------------- 10. 月度现金流（公积金账户抵扣） ---------------- */

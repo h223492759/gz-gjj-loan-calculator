@@ -205,9 +205,14 @@ it('提取额度 = min(账户余额, 实际支付的首期房款)', () => {
   assert.strictEqual(r.withdraw.downPayment, 1100000);
   assert.strictEqual(r.withdraw.totalBalance, 148000);
   assert.strictEqual(r.withdraw.onceLimit, 148000, '余额少于首付 → 一次性提取上限为全部余额');
-  assert.strictEqual(r.withdraw.safeLimit, 95840, '额度被最高限额卡住时，富余的余额可以提走');
-  assert.strictEqual(r.withdraw.keepBalance, 52160, '提完后还得留下撑住公式额的那部分');
-  assert.strictEqual(r.withdraw.remainInAccount, 52160);
+  assert.strictEqual(r.withdraw.safeLimit, 145840, '按本次实际要贷的 150 万算，富余的余额可以提走');
+  assert.strictEqual(r.withdraw.keepBalance, 2160, '提完后还得留下撑住公式额的那部分');
+  assert.strictEqual(r.withdraw.remainInAccount, 2160);
+
+  // 口径钉子：能提取多少按「本次实际贷款额」，不是「最高可贷上限」
+  const full = calculate({ ...base, loanNeed: 2000000 });   // 贷满上限 200 万
+  assert.strictEqual(full.withdraw.safeLimit, 95840, '贷到上限时只能提走 9.584 万');
+  assert.strictEqual(r.withdraw.safeLimit - full.withdraw.safeLimit, 50000, '少贷 50 万 → 多提 5 万（(200万−150万)÷10）');
 
   // 首付很小、余额很大的情形
   const r2 = calculate({
@@ -442,7 +447,7 @@ it('带角分的余额不会把可贷额抬高（向下取整，不四舍五入�
   assert.strictEqual(mk(12345).maxLoanGjj, 123450);
 });
 
-it('可提取余额 = 提完之后仍按原额度满贷的那部分，双人按余额分摊', () => {
+it('可提取余额 = 提完之后仍够贷到本次金额的那部分，双人按余额分摊', () => {
   const big = calculate({
     ...base,
     persons: [
@@ -475,7 +480,7 @@ it('可提取余额 = 提完之后仍按原额度满贷的那部分，双人按�
   assert.ok(after + 1 >= big.maxLoanGjj, `提完后公式额 ${after} 不该低于可贷额 ${big.maxLoanGjj}`);
 });
 
-it('额度被公式本身卡住时，为了满贷一分钱都不能提', () => {
+it('额度被公式本身卡住时，本次要贷的金额已用尽公式额 → 一分钱都不能提', () => {
   const r = calculate({
     ...base,
     persons: [
@@ -489,7 +494,7 @@ it('额度被公式本身卡住时，为了满贷一分钱都不能提', () => {
   assert.strictEqual(r.withdraw.formulaSlackBalance, 0);
   assert.strictEqual(r.withdraw.safeLimit, 0);
   assert.strictEqual(r.withdraw.keepBalance, r.withdraw.totalBalance, '余额必须全部留下');
-  assert.ok(r.notes.some((n) => /保证满贷/.test(n)), '要说明为什么不能提');
+  assert.ok(r.notes.some((n) => /公式额用尽/.test(n)), '要说明为什么不能提');
 });
 
 it('逐年月供对照表：最多 30 行，末期归零，逐年累加等于总额', () => {

@@ -658,7 +658,7 @@ function render(r) {
     ${kpi('能提取的余额', wan(r.withdraw.safeLimit), ' 万', true)}
     ${kpi('每月自付现金', yuan(r.cashflow.cashMonthly), ' 元')}
   </div>
-  <p class="muted" style="margin-top:8px">「能提取的余额」= 提取后公积金额度公式仍支撑最高可贷 <b>${yuan(r.maxLoanGjj)} 元</b>${r.gjjAmount < r.maxLoanGjj ? `（本次实际只需 <b>${yuan(r.gjjAmount)} 元</b>，多提不会影响本次贷款，但会降将来追加贷款的上限）` : ''}的余额，同时不超过已付首期房款 ${yuan(r.withdraw.downPayment)} 元${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}。</p>`;
+  <p class="muted" style="margin-top:8px">「能提取的余额」= 提走之后，额度公式仍撑得住本次 <b>${yuan(r.gjjAmount)} 元</b> 贷款的那部分余额，且不超过已付首期房款 ${yuan(r.withdraw.downPayment)} 元${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}。</p>`;
 
   /* ---- 预算上限：哪个约束卡住了 ---- */
   const pctOfCap = r.maxLoanGjj > 0 ? [
@@ -783,8 +783,8 @@ function render(r) {
     <div class="rows">
       <div class="row"><span class="rk">实际支付的首期房款</span><span class="rv">${yuan(r.withdraw.downPayment)} 元<small>总价 ${wan(r.totalPrice)} 万 − 贷款 ${wan(r.loanNeed)} 万${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}</small></span></div>
       <div class="row"><span class="rk">${r.mode === 'couple' ? '两人' : '本人'}账户余额合计</span><span class="rv">${yuan(r.withdraw.totalBalance)} 元</span></div>
-      <div class="row"><span class="rk">能提取的余额<small>提取后最高可贷仍不低于 ${yuan(r.maxLoanGjj)} 元${r.gjjAmount < r.maxLoanGjj ? `（本次用 ${yuan(r.gjjAmount)}）` : ''}</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalance)}」三者最小值</small></span></div>
-      <div class="row"><span class="rk">为保住满贷须留在账户里的余额</span><span class="rv">${yuan(r.withdraw.keepBalance)} 元<small>余额 ×${r.withdraw.balanceMultiplier} 计入额度公式，少了这块钱额度就从 ${yuan(r.maxLoanGjj)} 元往下掉</small></span></div>
+      <div class="row"><span class="rk">能提取的余额<small>提取后额度公式仍够贷到本次的 ${yuan(r.gjjAmount)} 元</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalance)}」三者最小值</small></span></div>
+      <div class="row"><span class="rk">为贷到 ${yuan(r.gjjAmount)} 元须留在账户里的余额</span><span class="rv">${yuan(r.withdraw.keepBalance)} 元<small>余额 ×${r.withdraw.balanceMultiplier} 计入额度公式，少了这块钱额度就从 ${yuan(r.gjjAmount)} 元往下掉</small></span></div>
       ${(r.withdraw.perPerson || []).map((p) => `<div class="row"><span class="rk">· ${esc(p.label)}</span><span class="rv">可提取 ${yuan(p.withdrawable)} 元<small>账户余额 ${yuan(p.balance)} 元 − 须保留 ${yuan(p.keep)} 元</small></span></div>`).join('')}
       <div class="row"><span class="rk">政策一次性提取上限</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>不超过实际支付的首期房款，也不超过账户余额</small></span></div>
       <div class="row"><span class="rk">该套住房提取总额上限</span><span class="rv">${yuan(r.withdraw.totalLimit)} 元<small>不超过实际支付的购房本息</small></span></div>
