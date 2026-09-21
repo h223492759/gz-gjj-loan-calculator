@@ -18,9 +18,11 @@ const state = {
   commercialRate: 3.0,
   rates: [3.0, 3.1, 3.25, 3.5, 3.7],
   lastResult: null,
-  editingId: null,
+  editingId: null,      // 非空 = 正在修改某条已有记录，保存时覆盖它
+  editingName: null,
   currentRecordId: null,
-  started: false
+  started: false,
+  formInited: false     // 空表单只铺一次；重新登录不清掉正在填的内容
 };
 
 /* ----------------------------- 工具函数 ----------------------------- */
@@ -59,6 +61,16 @@ function yuan(v) {
 function pct(v, digits) {
   const d = digits == null ? 3 : digits;
   return (num(v) * 100).toFixed(d).replace(/\.?0+$/, '') + '%';
+}
+
+/**
+ * 「百分点数值」→ 显示串。
+ * state.rates / state.commercialRate 存的是 3.15 这种百分点（不是 0.0315），
+ * 用 pct() 会把 3 显示成 300%，所以这两个字段必须走这里。
+ */
+function ratePct(v, digits) {
+  const d = digits == null ? 2 : digits;
+  return num(v).toFixed(d).replace(/\.?0+$/, '') + '%';
 }
 
 function toast(msg, ms) {
@@ -265,10 +277,17 @@ function buildPersonBoxes(mode, preset) {
   const catLabels = {};
   Object.keys(cats).forEach((k) => { catLabels[k] = cats[k].label; });
   const count = mode === 'couple' ? 2 : 1;
+  // 灰色占位用的示例值：来自 meta.defaultInput，只做提示、不预填成真实值
+  const demo = ((state.meta.defaultInput || {}).persons) || [];
+  const ph = demo.map((p) => ({
+    balance: p.balance != null ? String(p.balance) : '86000',
+    deposit: p.monthlyDeposit != null ? String(p.monthlyDeposit) : '2600'
+  }));
 
   box.innerHTML = '';
   for (let i = 0; i < count; i++) {
     const p = (preset && preset[i]) || {};
+    const e = ph[i] || ph[0] || { balance: '86000', deposit: '2600' };
     const div = document.createElement('div');
     div.className = 'person-box';
     div.dataset.idx = String(i);
@@ -286,11 +305,11 @@ function buildPersonBoxes(mode, preset) {
         </div>
         <div>
           <label>已有公积金余额 <span class="unit">元</span></label>
-          <input type="number" class="p-balance" min="0" step="100" value="${p.balance != null ? p.balance : ''}" placeholder="如 86000">
+          <input type="number" class="p-balance" min="0" step="100" value="${p.balance != null ? p.balance : ''}" placeholder="如 ${esc(e.balance)}">
         </div>
         <div>
           <label>每月缴存额 <span class="unit">元</span></label>
-          <input type="number" class="p-deposit" min="0" step="10" value="${p.monthlyDeposit != null ? p.monthlyDeposit : ''}" placeholder="如 2600">
+          <input type="number" class="p-deposit" min="0" step="10" value="${p.monthlyDeposit != null ? p.monthlyDeposit : ''}" placeholder="如 ${esc(e.deposit)}">
         </div>
       </div>`;
     box.appendChild(div);
@@ -301,7 +320,7 @@ function buildRateChips() {
   const wrap = $('#rateChips');
   wrap.innerHTML = state.rates.map((r) => {
     const on = Math.abs(r - state.commercialRate) < 1e-9;
-    return `<button type="button" class="chip${on ? ' on' : ''}" data-rate="${r}">${pct(r, 2)}</button>`;
+    return `<button type="button" class="chip${on ? ' on' : ''}" data-rate="${r}">${ratePct(r, 2)}</button>`;
   }).join('');
   $$('#rateChips .chip').forEach((c) => {
     c.addEventListener('click', () => {
@@ -317,7 +336,7 @@ function buildRateChips() {
     const defaults = [3.0, 3.1, 3.25, 3.5, 3.7];
     const mine = state.rates.filter((r) => !defaults.some((d) => Math.abs(d - r) < 1e-9));
     customBox.innerHTML = mine.length
-      ? mine.map((r) => `<span class="chip">${pct(r, 2)}<span class="x" data-del="${r}">×</span></span>`).join('')
+      ? mine.map((r) => `<span class="chip">${ratePct(r, 2)}<span class="x" data-del="${r}">×</span></span>`).join('')
       : '<span class="muted">暂无自定义利率</span>';
     $$('#customRateList .x').forEach((x) => {
       x.addEventListener('click', () => {
@@ -399,10 +418,153 @@ function updateDownHint() {
   $('#lprHint').textContent = `${state.meta.commercial.lpr_note} 组合贷首付须同时满足公积金要求。`;
 }
 
+/* ------------------------ 空表单 / 编辑态 / 最近记录 ------------------------ */
+
+const EMPTY_RESULT_HTML = `<div class="card empty">
+  <p>填好左侧信息后点「开始测算」，这里会给出<br>
+  <b>能否满贷 / 需要多少商贷 / 月供与利息 / 能提取多少余额</b>。</p>
+</div>`;
+
+function renderEmptyState() {
+  const box = $('#result');
+  if (box) box.innerHTML = EMPTY_RESULT_HTML;
+}
+
+/**
+ * 首次进入与「重置」都走这里：输入框一律留空，只在灰色占位文字里给示例值 ——
+ * 省掉「先删掉预填的默认值再输入」这一步。留空时与服务端默认口径一致
+ * （首付 20%、楼龄 0、期限 30 年），所以结果与「手动填默认值」完全相同。
+ */
+function initBlankForm() {
+  const d = (state.meta && state.meta.defaultInput) || {};
+  const wanOf = (v) => String(num(v) / 10000);
+
+  state.editingId = null;
+  state.editingName = null;
+  state.lastResult = null;
+
+  state.mode = 'couple';
+  $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === 'couple'));
+  buildPersonBoxes('couple', null);
+
+  $('#loanNeed').value = '';
+  if (d.loanNeed) $('#loanNeed').placeholder = `例如 ${wanOf(d.loanNeed)}`;
+  $('#houseTotalPrice').value = '';
+  if (d.houseTotalPrice) $('#houseTotalPrice').placeholder = `如 ${wanOf(d.houseTotalPrice)}；选填，填了才能算首付与提取额`;
+  $('#downRatio').value = '';
+  $('#secondHandAge').value = '';
+  $('#termYears').value = 30;
+  $('#termEcho').textContent = '30';
+  $('#familyMonthlyIncome').value = '';
+  if (d.familyMonthlyIncome) $('#familyMonthlyIncome').placeholder = `如 ${d.familyMonthlyIncome}；用于校验月供不超收入 50%`;
+  $('#isAffordableHousing').checked = false;
+  $('#childPolicy').value = 'none';
+  $('#qualityPolicy').value = 'none';
+
+  state.loanType = 'first';
+  $$('#typeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.type === 'first'));
+  state.repayment = 'equal_installment';
+  $$('#repaySeg button').forEach((b) => b.classList.toggle('on', b.dataset.repay === 'equal_installment'));
+
+  if (Array.isArray(d.customRates) && d.customRates.length) state.rates = d.customRates.slice();
+  if (!state.rates.length) state.rates = [3.0, 3.1, 3.25, 3.5, 3.7];
+  const cr = num(d.commercialRate);
+  state.commercialRate = cr > 1 ? cr : (cr > 0 ? cr * 100 : state.rates[0]);
+
+  buildRateChips();
+  updateDownHint();
+  syncEditingUi();
+  renderEmptyState();
+}
+
+/** 服务端要求「至少一位借款人填了出生年月」且「贷款金额 > 0」，没填够就先别打接口 */
+function hasEnoughInput() {
+  const anyBirth = $$('#personBoxes .p-birth').some((el) => !!el.value);
+  return anyBirth && num($('#loanNeed').value) > 0;
+}
+
+/** 编辑态界面：顶部提示 + 保存按钮文案 */
+function syncEditingUi() {
+  const on = !!state.editingId;
+  const banner = $('#editBanner');
+  if (banner) banner.hidden = !on;
+  const nm = $('#editName');
+  if (nm) nm.textContent = state.editingName || '';
+  const btn = $('#saveBtn');
+  if (btn) btn.textContent = on ? '保存修改（覆盖）' : '保存记录';
+}
+
+/** 一条记录的「输入摘要」——记录页与顶部最近卡片共用同一套文案 */
+function recordMetaText(rec) {
+  const p = (rec && rec.payload) || {};
+  const gp = (p.persons || []).map((x) => x.birth).filter(Boolean).join(' + ') || '—';
+  const mode = p.mode === 'single' ? '单人' : '双人';
+  const need = p.loanNeed ? `贷款 ${wan(p.loanNeed)} 万` : '未填贷款额';
+  const totalPrice = p.houseTotalPrice ? ` · 总价 ${wan(p.houseTotalPrice)} 万` : '';
+  const term = p.termYears ? ` · ${p.termYears} 年` : '';
+  return `${mode} · ${gp} · ${need}${totalPrice}${term}`;
+}
+
+/** 把一条记录载入表单（editing=true 时进入编辑态，保存会覆盖该记录） */
+function loadRecordIntoForm(rec, opts) {
+  const o = opts || {};
+  fill(rec.payload);
+  state.editingId = o.editing ? rec.id : null;
+  state.editingName = o.editing ? rec.name : null;
+  syncEditingUi();
+  goTab('calc');
+  setTimeout(() => runCalc({ quiet: true }), 60);
+}
+
+/** 顶部「最近一次」卡片：没有记录就整张隐藏 */
+function renderRecentCard() {
+  const card = $('#recentCard');
+  if (!card) return;
+  const rec = state.records[0];
+  if (!rec) { card.hidden = true; return; }
+  card.hidden = false;
+  card.dataset.id = String(rec.id);
+  $('#recentName').textContent = rec.name;
+  const t = String(rec.updatedAt || '').slice(0, 16).replace('T', ' ');
+  $('#recentMeta').textContent = `${t} · ${recordMetaText(rec)}`;
+}
+
+/** 一键复用：把最近一次的输入填回表单（不动记录本身） */
+function recentReuse() {
+  const rec = state.records[0];
+  if (!rec) return;
+  state.editingId = null;
+  state.editingName = null;
+  loadRecordIntoForm(rec);
+  toast(`已复用「${rec.name}」的输入`);
+}
+
+/** 复制修改：先复制成一条新记录，再在副本上改（保存即覆盖副本） */
+async function recentCopyEdit() {
+  const rec = state.records[0];
+  if (!rec) return;
+  try {
+    const { record } = await api(`/api/records/${rec.id}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ name: `${rec.name} 副本` })
+    });
+    state.records = [record].concat(state.records);
+    loadRecordIntoForm(record, { editing: true });
+    renderRecentCard();
+    toast(`已复制为「${record.name}」，改完点「保存修改」覆盖副本`);
+    await loadRecords();
+  } catch (e) {
+    toast(e.message, 3200);
+  }
+}
+
 /* ------------------------------ 测算 ------------------------------ */
 
 async function runCalc(opts) {
   const o = opts || {};
+  // 自动重算（切换还款方式 / 换利率触发的）在表单还没填够时静默跳过，
+  // 不要把「请填写需要贷款的金额」这种红字糊在刚进页面的人脸上。
+  if (o.quiet && !hasEnoughInput()) { renderEmptyState(); return; }
   try {
     const { result } = await api('/api/calc', { method: 'POST', body: JSON.stringify(collect()) });
     state.lastResult = result;
@@ -602,6 +764,7 @@ async function loadRecords() {
     state.records = records;
     $('#recCount').textContent = String(records.length);
     renderRecords();
+    renderRecentCard();
   } catch (e) {
     $('#recordList').innerHTML = `<div class="alert alert-bad">${esc(e.message)}</div>`;
   }
@@ -613,19 +776,13 @@ function renderRecords() {
     box.innerHTML = '<div class="empty-note">还没有记录。测算完成后点「保存记录」即可留存。</div>';
     return;
   }
-  box.innerHTML = state.records.map((r) => {
-    const p = r.payload || {};
-    const gp = (p.persons || []).map((x) => x.birth).filter(Boolean).join(' + ') || '—';
-    const need = p.loanNeed ? `贷款 ${wan(p.loanNeed)} 万` : '';
-    const totalPrice = p.houseTotalPrice ? ` · 总价 ${wan(p.houseTotalPrice)} 万` : '';
-    const term = p.termYears ? ` · ${p.termYears} 年` : '';
-    const mode = p.mode === 'single' ? '单人' : '双人';
-    return `<div class="record" data-id="${r.id}">
+  box.innerHTML = state.records.map((r) => `
+    <div class="record" data-id="${r.id}">
       <div class="record-top">
         <span class="record-name">${esc(r.name)}</span>
         <span class="record-time">${esc(String(r.updatedAt).slice(0, 16).replace('T', ' '))}</span>
       </div>
-      <div class="record-meta">${esc(mode)} · ${esc(gp)}${gp === '—' ? '' : ''} · ${esc(need + totalPrice + term)}</div>
+      <div class="record-meta">${esc(recordMetaText(r))}</div>
       <div class="record-actions">
         <button type="button" class="btn btn-primary btn-sm" data-act="load">一键调用</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="overwrite">覆盖保存</button>
@@ -633,8 +790,7 @@ function renderRecords() {
         <button type="button" class="btn btn-ghost btn-sm" data-act="duplicate">复制为新</button>
         <button type="button" class="btn btn-danger btn-sm" data-act="delete">删除</button>
       </div>
-    </div>`;
-  }).join('');
+    </div>`).join('');
 
   $$('#recordList .record').forEach((el) => {
     const id = Number(el.dataset.id);
@@ -649,10 +805,10 @@ async function handleRecordAction(act, rec, el) {
   if (!rec) return;
   try {
     if (act === 'load') {
-      fill(rec.payload);
-      goTab('calc');
+      state.editingId = null;
+      state.editingName = null;
+      loadRecordIntoForm(rec);
       toast(`已载入「${rec.name}」`);
-      setTimeout(() => runCalc({ quiet: true }), 60);
       return;
     }
     if (act === 'overwrite') {
@@ -706,6 +862,22 @@ async function handleRecordAction(act, rec, el) {
 
 async function saveRecord(name) {
   if (!state.lastResult || state.lastResult.ok === false) return toast('请先测算一次');
+
+  // 编辑态（从「复制修改」进来）：直接覆盖那条记录，不再新建
+  if (state.editingId) {
+    try {
+      await api(`/api/records/${state.editingId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ payload: collect() })
+      });
+      toast(`已更新「${state.editingName || ''}」`);
+      await loadRecords();
+    } catch (e) {
+      toast(e.message, 3200);
+    }
+    return;
+  }
+
   let finalName = name;
   if (finalName === undefined) {
     const guess = `${state.mode === 'couple' ? '双人' : '单人'} ${wan(state.lastResult.loanNeed)} 万 / ${state.lastResult.termYears} 年`;
@@ -719,7 +891,7 @@ async function saveRecord(name) {
       body: JSON.stringify({ name: finalName, payload: collect() })
     });
     toast('已保存到本地记录');
-    loadRecords();
+    await loadRecords();
   } catch (e) {
     toast(e.message, 3200);
   }
@@ -1006,14 +1178,11 @@ async function startApp() {
   $('#childPolicy').innerHTML = optionList(m.loan.child_uplift.labels, 'none');
   $('#qualityPolicy').innerHTML = optionList(m.loan.quality_uplift.labels, 'none');
 
-  // 默认输入只在第一次进入时铺，重新登录不会冲掉正在填的内容
-  if (!state.started) {
-    state.started = true;
-    const d = m.defaultInput;
-    state.rates = d.customRates.slice();
-    state.commercialRate = d.commercialRate;
-    fill(d);
-    buildRateChips();
+  // 空表单只铺一次（首次进入 / 刷新页面后）；重新登录不会冲掉正在填的内容
+  state.started = true;
+  if (!state.formInited) {
+    state.formInited = true;
+    initBlankForm();
     bindEvents();
   } else {
     buildRateChips();
@@ -1024,7 +1193,9 @@ async function startApp() {
   applyAuthUi();
 
   await loadRecords();
-  runCalc({ quiet: true });
+  // 表单已经有内容（重新登录 / 刷新后回填）才自动算一次；
+  // 空表单保持「还没测算」的引导卡片，不弹红字
+  if (hasEnoughInput()) runCalc({ quiet: true });
 }
 
 /* ------------------------------ 事件绑定 ------------------------------ */
@@ -1071,7 +1242,7 @@ function bindEvents() {
     $('#customRate').value = '';
     buildRateChips();
     runCalc({ quiet: true });
-    toast(`已加入 ${pct(r, 2)} 并选中`);
+    toast(`已加入 ${ratePct(r, 2)} 并选中`);
   });
 
   $('#calcForm').addEventListener('submit', (e) => {
@@ -1079,11 +1250,21 @@ function bindEvents() {
     runCalc();
   });
   $('#saveBtn').addEventListener('click', () => saveRecord());
-  $('#resetBtn').addEventListener('click', async () => {
-    fill(state.meta.defaultInput);
-    toast('已重置为默认值');
-    runCalc({ quiet: true });
+  $('#resetBtn').addEventListener('click', () => {
+    initBlankForm();
+    toast('已清空表单，按灰色提示填写即可');
   });
+
+  $('#editExitBtn').addEventListener('click', () => {
+    state.editingId = null;
+    state.editingName = null;
+    syncEditingUi();
+    toast('已退出修改，再保存会新建一条记录');
+  });
+
+  $('#recentReuseBtn').addEventListener('click', recentReuse);
+  $('#recentCopyBtn').addEventListener('click', recentCopyEdit);
+  $('#recentAllBtn').addEventListener('click', () => goTab('records'));
 
   $('#exportBtn').addEventListener('click', () => { window.location.href = '/api/export'; });
   $('#importFile').addEventListener('change', async (e) => {

@@ -109,7 +109,8 @@ function calculate(input) {
   const warnings = [];
   const notes = [];
 
-  const asOf = input.asOf && R.parseYM(input.asOf) ? input.asOf : R.toDateStr(R.today());
+  // 基准日取完整日期：参数时效要算「距今几天」，用只到月的 toDateStr 会差出整月
+  const asOf = input.asOf && R.parseYM(input.asOf) ? input.asOf : R.todayStr();
   const mode = input.mode === 'couple' ? 'couple' : 'single';
   const persons = (mode === 'couple' ? (input.persons || []).slice(0, 2) : (input.persons || []).slice(0, 1))
     .filter((p) => p && p.birth)

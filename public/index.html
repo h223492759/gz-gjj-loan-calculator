@@ -95,6 +95,23 @@
 
   <!-- ======================= 测算 ======================= -->
   <section class="panel active" data-panel="calc">
+
+    <!-- ---------- 最近一次记录（有记录时才出现） ---------- -->
+    <div class="card recent" id="recentCard" hidden>
+      <div class="recent-left">
+        <span class="recent-tag">最近一次</span>
+        <div class="recent-txt">
+          <b id="recentName">—</b>
+          <span id="recentMeta" class="recent-meta">—</span>
+        </div>
+      </div>
+      <div class="recent-actions">
+        <button type="button" class="btn btn-primary btn-sm" id="recentReuseBtn">一键复用</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="recentCopyBtn">复制修改</button>
+        <button type="button" class="link-btn" id="recentAllBtn">全部记录 →</button>
+      </div>
+    </div>
+
     <div class="layout">
 
       <!-- ---------- 输入 ---------- -->
@@ -102,6 +119,11 @@
         <div class="card-head">
           <h2>输入信息</h2>
           <button type="button" class="link-btn" id="resetBtn">重置</button>
+        </div>
+
+        <div class="alert alert-info edit-banner" id="editBanner" hidden>
+          <span>正在修改「<b id="editName"></b>」· 点「保存修改」会覆盖这条记录</span>
+          <button type="button" class="link-btn" id="editExitBtn">退出修改</button>
         </div>
 
         <div class="field">
@@ -121,19 +143,19 @@
           </div>
           <div class="field">
             <label for="houseTotalPrice">购房总价 <span class="unit">万元 · 选填</span></label>
-            <input type="number" id="houseTotalPrice" step="0.1" min="0" placeholder="填了才能算首付与提取额">
+            <input type="number" id="houseTotalPrice" step="0.1" min="0" placeholder="如 260；填了才能算首付与提取额">
           </div>
         </div>
 
         <div class="grid2">
           <div class="field">
             <label for="downRatio">首付比例 <span class="unit">%</span></label>
-            <input type="number" id="downRatio" step="1" min="0" max="90" value="20">
+            <input type="number" id="downRatio" step="1" min="0" max="90" placeholder="默认 20">
             <p class="hint" id="downHint"></p>
           </div>
           <div class="field">
             <label for="secondHandAge">二手楼楼龄 <span class="unit">年 · 新房填 0</span></label>
-            <input type="number" id="secondHandAge" step="1" min="0" value="0">
+            <input type="number" id="secondHandAge" step="1" min="0" placeholder="默认 0（新房）">
             <p class="hint">二手楼「期限 + 楼龄」≤ 50 年</p>
           </div>
         </div>
@@ -173,7 +195,7 @@
         <div class="grid2">
           <div class="field">
             <label for="familyMonthlyIncome">家庭月收入 <span class="unit">元 · 选填</span></label>
-            <input type="number" id="familyMonthlyIncome" step="100" min="0" placeholder="用于校验月供不超收入 50%">
+            <input type="number" id="familyMonthlyIncome" step="100" min="0" placeholder="如 38000；用于校验月供不超收入 50%">
           </div>
           <div class="field">
             <label class="switch-row">

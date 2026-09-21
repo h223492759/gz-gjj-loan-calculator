@@ -43,8 +43,27 @@ function today() {
   return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
 }
 
+/** 只到月（YYYY-MM）。退休年月、年龄这类按月划档的场景用它 */
 function toDateStr(ym) {
   return `${ym.y}-${String(ym.m).padStart(2, '0')}`;
+}
+
+/**
+ * 完整日期（YYYY-MM-DD）。
+ * ⚠️ 别拿 toDateStr(today()) 当「今天」去算天数差 —— 它只到月，
+ *    相减会得到「本月 1 日 − 参数日」这种错值（曾导致界面显示「距今 -20 天」）。
+ */
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 归一成完整日期：'YYYY-MM' → 'YYYY-MM-01'；已是完整日期则原样返回；非法返回 null */
+function fullDate(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(t)) return t.replace(/[/.]/g, '-');
+  const ym = parseYM(t);
+  return ym ? `${ym.y}-${String(ym.m).padStart(2, '0')}-01` : null;
 }
 
 function addMonths(ym, n) {
@@ -121,21 +140,25 @@ function ageAt(birthStr, asOf) {
 
 function freshness(asOf) {
   const cfg = rules();
-  const base = asOf || toDateStr(today());
+  // base 必须是完整日期；asOf 缺省或只给到年月时分别回落到「今天」和「当月 1 日」
+  const base = fullDate(asOf) || todayStr();
   const days = daysBetween(cfg.as_of, base);
   const limit = cfg.stale_after_days || 365;
+  const ahead = days < 0;
   return {
     asOf: cfg.as_of,
     policyEffective: cfg.policy_effective,
     baseDate: base,
     ageDays: days,
     limitDays: limit,
-    level: days > limit ? 'stale' : days > limit * 0.75 ? 'warn' : 'ok',
-    text: days > limit
-      ? `政策参数已 ${days} 天未复核，可能已失效，请回官方来源核对后再使用`
-      : days > limit * 0.75
-        ? `政策参数已 ${days} 天未复核，建议回官方来源核对`
-        : `政策参数 ${cfg.as_of} 复核，距今 ${days} 天`
+    level: ahead ? 'warn' : days > limit ? 'stale' : days > limit * 0.75 ? 'warn' : 'ok',
+    text: ahead
+      ? `参数复核日期（${cfg.as_of}）晚于今天，请核对 config 里的 as_of`
+      : days > limit
+        ? `政策参数已 ${days} 天未复核，可能已失效，请回官方来源核对后再使用`
+        : days > limit * 0.75
+          ? `政策参数已 ${days} 天未复核，建议回官方来源核对`
+          : `政策参数 ${cfg.as_of} 复核，距今 ${days} 天`
   };
 }
 
@@ -150,5 +173,7 @@ module.exports = {
   addMonths,
   monthsBetween,
   toDateStr,
-  today
+  fullDate,
+  today,
+  todayStr
 };

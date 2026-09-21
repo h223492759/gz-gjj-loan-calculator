@@ -3,6 +3,7 @@ data/*
 !data/.gitkeep
 data-test/
 data-preview/
+data-replay/
 *.sqlite
 *.sqlite3
 *.db

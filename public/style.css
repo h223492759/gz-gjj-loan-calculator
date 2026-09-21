@@ -97,6 +97,9 @@ b, strong { font-weight: 700; }
 }
 
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+/* 里面的 div 也要能收缩：否则 h1 的 nowrap 会顶住宽度，
+   窄屏（320px）下标题会越过自己的盒子、压到右边的按钮上（h1 的 ellipsis 也失效）。 */
+.brand > div { min-width: 0; }
 .brand-dot {
   width: 12px; height: 12px; border-radius: 4px; flex: none;
   background: var(--accent);
@@ -200,6 +203,9 @@ b, strong { font-weight: 700; }
 
 .form { position: sticky; top: 104px; }
 @media (max-width: 1023px) { .form { position: static; } }
+/* 窄屏下顶栏是吸顶的（约 97px）。runCalc 在 <1024px 会 scrollIntoView(#result)，
+   不留出这段高度的话，结果卡片顶部的结论行会被顶栏盖住。 */
+@media (max-width: 1023px) { #result { scroll-margin-top: 104px; } }
 
 .field { margin-bottom: 14px; }
 .field > label {
@@ -231,6 +237,19 @@ input:focus, select:focus {
   background: var(--card);
 }
 input::placeholder { color: var(--faint); }
+/* input[type="date"] 单独写：不套用上面的 appearance:none，
+   否则 Safari 会连日历图标一起抹掉，用户点不出选择器。 */
+input[type="date"] {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  min-height: 40px;
+}
 select {
   background-image: linear-gradient(45deg, transparent 50%, var(--faint) 50%),
                     linear-gradient(135deg, var(--faint) 50%, transparent 50%);
@@ -363,6 +382,36 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
 }
 
+/* ------------------- 顶部「最近一次」快捷卡片 / 编辑态 ------------------- */
+
+.recent {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+/* 有 display 声明在前，必须显式兜住 [hidden]，否则隐藏不掉 */
+.recent[hidden] { display: none; }
+.recent-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.recent-tag {
+  flex: none; font-size: 11.5px; font-weight: 700;
+  background: var(--accent); color: var(--accent-ink);
+  padding: 3px 9px; border-radius: 999px;
+}
+.recent-txt { min-width: 0; }
+.recent-txt b { display: block; font-size: 14px; word-break: break-all; }
+.recent-meta { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.recent-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.edit-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--text);
+}
+.edit-banner[hidden] { display: none; }
+
 /* ------------------------------- 结果 ------------------------------- */
 
 .result { min-width: 0; }
@@ -433,6 +482,8 @@ tr.hl td { background: var(--accent-soft); font-weight: 600; }
 .src-list { list-style: none; margin: 0; padding: 0; }
 .src-list li { font-size: 12.5px; color: var(--muted); padding: 5px 0; border-bottom: 1px dashed var(--line); }
 .src-list li:last-child { border-bottom: 0; }
+/* 来源是整条 URL，不断行会把窄屏顶出横向滚动（390 会顶宽布局视口、768 会左右晃） */
+.src-list a { overflow-wrap: anywhere; word-break: break-all; }
 
 details.policy-src { margin-top: 12px; }
 details.policy-src summary { cursor: pointer; font-size: 13px; color: var(--muted); }
@@ -568,6 +619,12 @@ body.locked .lock { display: flex; }
   .lock { padding: 14px; align-items: flex-start; }
   .lock-card { padding: 20px 17px 18px; border-radius: 15px; margin-top: 6vh; }
   .lock-brand h1 { font-size: 15.5px; }
+  /* 390px 这类窄屏：徽标文字（「参数 2026-09-21」）会挤掉标题，
+     缩成一个按时效变色的圆点，完整说明仍在 title 里，政策页也能看到详情。 */
+  #freshnessBadge { width: 13px; height: 13px; padding: 0; border-radius: 50%; font-size: 0; overflow: hidden; }
+  /* 320px 顶栏只放得下「标题 + 主题切换」；退出登录在「设置」页里有同样的入口 */
+  .brand h1 { font-size: 14px; }
+  #logoutBtn { display: none; }
 }
 
 /* ------------------------------- 设置页 ------------------------------- */
@@ -608,6 +665,18 @@ button, .btn, .tab, .chip, .icon-btn, a, label, summary, input[type="range"] {
     padding: 10px 12px;
     min-height: 44px;          /* 44px = 手指点按的舒适下限 */
   }
+  /* 出生日期框（type=date）同样要 ≥16px，否则 iOS 一聚焦就放大整页 */
+  input[type="date"] { font-size: 16px; padding: 10px 12px; min-height: 44px; }
+  /* 触屏上把点按目标整体撑到 40px 以上，减少误触 */
+  .icon-btn { width: 40px; height: 40px; }
+  .segmented button { min-height: 40px; font-size: 14px; }
+  .chip { min-height: 40px; display: inline-flex; align-items: center; font-size: 13px; }
+  .link-btn { min-height: 40px; padding: 6px 8px; }
+  /* 记录卡片上的小按钮（更名/复制/删除…）在手机上也要够大 */
+  .btn-sm, .record-actions .btn { min-height: 40px; padding: 9px 13px; font-size: 13px; }
+  .record input.rename { min-height: 40px; }
+  /* 政策来源链接是纯文字，给点内边距扩大点按范围（≥36px） */
+  .src-list a { display: inline-block; padding: 8px 0; }
   .topbar-inner { padding: 10px 14px 4px; }
   .brand h1 { font-size: 15px; }
   .brand-sub { display: none; }
@@ -615,6 +684,13 @@ button, .btn, .tab, .chip, .icon-btn, a, label, summary, input[type="range"] {
   .tab { padding: 8px 11px 10px; font-size: 14px; }
   .wrap { padding: 14px 12px calc(40px + env(safe-area-inset-bottom)); }
   .card { padding: 15px; border-radius: 12px; }
+  /* 最近记录卡片：窄屏改竖排，两个按钮各占一半，手指好点 */
+  .recent { flex-direction: column; align-items: stretch; }
+  /* 竖排时 flex-basis 会变成「高度」，必须显式收回，否则上半截会被撑出一大块空白 */
+  .recent-left { flex: 0 0 auto; align-items: flex-start; }
+  .recent-actions { width: 100%; }
+  .recent-actions .btn { flex: 1 1 0; }
+  .recent-actions .link-btn { margin-left: auto; }
   .kpi .v { font-size: 18px; }
   .verdict h2 { font-size: 17px; }
   .row { font-size: 12.5px; padding: 9px 11px; }

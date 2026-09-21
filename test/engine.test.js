@@ -299,6 +299,25 @@ it('参数时效检测：参数日期在未来/今天为 ok，一年以上为 st
   assert.strictEqual(R.freshness('2028-01-01').level, 'stale');
 });
 
+it('参数时效的基准日必须是完整日期（曾因只到月而显示「距今 -20 天」）', () => {
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(R.todayStr()), `todayStr=${R.todayStr()}`);
+  assert.strictEqual(R.fullDate('2026-09'), '2026-09-01', '年月要补齐为当月 1 日');
+  assert.strictEqual(R.fullDate('2026-09-21'), '2026-09-21');
+  assert.strictEqual(R.fullDate(null), null);
+
+  // 走缺省基准日分支（界面就是这条路径）：asOf 必须是完整日期，否则天数差会差出整月
+  const r = calculate({ ...base, asOf: undefined });
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(r.asOf), `asOf 应为完整日期，实际 ${r.asOf}`);
+  assert.ok(Number.isInteger(r.freshness.ageDays) && r.freshness.ageDays >= 0,
+    `ageDays 应为非负整数，实际 ${r.freshness.ageDays}`);
+  assert.ok(!/距今 -\d/.test(r.freshness.text), r.freshness.text);
+
+  // 参数复核日 == 今天 → 文案里是「距今 0 天」
+  const same = R.freshness(R.todayStr());
+  assert.strictEqual(same.ageDays, 0);
+  assert.ok(/距今 0 天/.test(same.text), same.text);
+});
+
 it('入参缺失时给出可读错误而不是抛异常', () => {
   assert.strictEqual(calculate({}).ok, false);
   assert.ok(calculate({ persons: [], loanNeed: 100 }).error);
