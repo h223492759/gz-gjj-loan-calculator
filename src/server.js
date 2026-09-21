@@ -52,7 +52,13 @@ function readVersion() {
 }
 const VERSION = readVersion();
 
-const nowStr = () => new Date().toISOString();
+/** 统一用北京时间（UTC+8）落库与返回；不带时区后缀，界面直接展示。
+ *  容器时区是 UTC，toISOString() 会差 8 小时，因此显式按 Asia/Shanghai 格式化。 */
+const BJ_FMT = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+const nowStr = () => BJ_FMT.format(new Date()).replace(' ', 'T');
 const trim = (s, n) => String(s == null ? '' : s).slice(0, n).trim();
 
 /* ============================== 元信息 ============================== */

@@ -154,27 +154,24 @@
             <p class="hint" id="downHint"></p>
           </div>
           <div class="field">
-            <label for="builtAt">二手楼建成日期 <span class="unit">年月 · 新房不填</span></label>
-            <input type="month" id="builtAt" min="1950-01" placeholder="新房留空">
-            <p class="hint" id="builtHint">按房屋建成（竣工）日期自动算楼龄；二手楼「期限 + 楼龄」≤ 50 年</p>
+            <label>二手楼楼龄 <span class="unit">新房不填</span></label>
+            <div class="segmented" id="builtSeg">
+              <button type="button" data-bmode="date" class="on">按建成日期</button>
+              <button type="button" data-bmode="age">按楼龄</button>
+            </div>
+            <input type="month" id="builtAt" min="1950-01" placeholder="如 2005-06（建成年月）">
+            <input type="number" id="secondHandAge" min="0" max="70" step="1" placeholder="如 21（年）" hidden>
+            <p class="hint" id="builtHint">两种填法二选一；二手楼「期限 + 楼龄」≤ 50 年</p>
           </div>
         </div>
 
-        <div class="grid2">
-          <div class="field">
-            <label>套数认定（按购房所在区）</label>
-            <div class="segmented" id="typeSeg">
-              <button type="button" data-type="first" class="on">首套</button>
-              <button type="button" data-type="second">第二套</button>
-            </div>
+        <div class="field">
+          <label>套数认定（按购房所在区）</label>
+          <div class="segmented" id="typeSeg">
+            <button type="button" data-type="first" class="on">首套</button>
+            <button type="button" data-type="second">第二套</button>
           </div>
-          <div class="field">
-            <label>还款方式</label>
-            <div class="segmented" id="repaySeg">
-              <button type="button" data-repay="equal_installment" class="on">等额本息</button>
-              <button type="button" data-repay="equal_principal">等额本金</button>
-            </div>
-          </div>
+          <p class="hint">两种还款方式（等额本息 / 等额本金）在结果里并列展示，无需选择</p>
         </div>
 
         <div class="field">

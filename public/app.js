@@ -375,11 +375,12 @@ function collect() {
     childPolicy: $('#childPolicy').value,
     qualityPolicy: $('#qualityPolicy').value,
     isAffordableHousing: $('#isAffordableHousing').checked,
-    builtAt: ($('#builtAt').value || '').trim() || null,
+    builtAt: state.builtMode === 'date' ? (($('#builtAt').value || '').trim() || null) : null,
+    secondHandAge: state.builtMode === 'age' ? (num($('#secondHandAge').value) || 0) : 0,
     familyMonthlyIncome: num($('#familyMonthlyIncome').value),
     commercialRate: state.commercialRate,
     customRates: state.rates.slice(),
-    repayment: state.repayment
+    repayment: 'equal_installment'
   };
 }
 
@@ -392,7 +393,9 @@ function fill(payload) {
   $('#loanNeed').value = p.loanNeed ? (num(p.loanNeed) / 10000) : '';
   $('#houseTotalPrice').value = p.houseTotalPrice ? (num(p.houseTotalPrice) / 10000) : '';
   $('#downRatio').value = p.downRatio != null ? p.downRatio : 20;
-  $('#builtAt').value = p.builtAt || '';
+  if (p.builtAt) { setBuiltMode('date'); $('#builtAt').value = p.builtAt; }
+  else if (num(p.secondHandAge) > 0) { setBuiltMode('age'); $('#secondHandAge').value = p.secondHandAge; }
+  else { $('#builtAt').value = ''; $('#secondHandAge').value = ''; }
   $('#termYears').value = p.termYears != null ? Math.min(30, p.termYears) : 30;
   $('#termEcho').textContent = $('#termYears').value;
   $('#familyMonthlyIncome').value = p.familyMonthlyIncome || '';
@@ -403,8 +406,7 @@ function fill(payload) {
   state.loanType = p.loanType === 'second' ? 'second' : 'first';
   $$('#typeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.type === state.loanType));
 
-  state.repayment = p.repayment === 'equal_principal' ? 'equal_principal' : 'equal_installment';
-  $$('#repaySeg button').forEach((b) => b.classList.toggle('on', b.dataset.repay === state.repayment));
+  // 两种还款方式在结果里并列展示，不再提供选择；固定等额本息作为主口径
 
   if (Array.isArray(p.customRates) && p.customRates.length) {
     const merged = p.customRates.map(Number).filter((v) => v > 0);
@@ -413,6 +415,18 @@ function fill(payload) {
   if (p.commercialRate) state.commercialRate = num(p.commercialRate) > 1 ? num(p.commercialRate) : num(p.commercialRate) * 100;
   buildRateChips();
   updateDownHint();
+}
+
+/** 二手楼楼龄两种填法切换：按建成日期（年月）或直接填楼龄（年） */
+function setBuiltMode(mode) {
+  state.builtMode = mode === 'age' ? 'age' : 'date';
+  $$('#builtSeg button').forEach((b) => b.classList.toggle('on', b.dataset.bmode === state.builtMode));
+  const isDate = state.builtMode === 'date';
+  $('#builtAt').hidden = !isDate;
+  $('#secondHandAge').hidden = isDate;
+  // 切换即清空两种填法，避免隐藏的那个残留旧值、切回来时悄悄生效
+  $('#builtAt').value = '';
+  $('#secondHandAge').value = '';
 }
 
 function updateDownHint() {
@@ -456,7 +470,9 @@ function initBlankForm() {
   $('#houseTotalPrice').value = '';
   if (d.houseTotalPrice) $('#houseTotalPrice').placeholder = `如 ${wanOf(d.houseTotalPrice)}；选填，填了才能算首付与提取额`;
   $('#downRatio').value = '';
+  setBuiltMode('date');
   $('#builtAt').value = '';
+  $('#secondHandAge').value = '';
   $('#termYears').value = 30;
   $('#termEcho').textContent = '30';
   $('#familyMonthlyIncome').value = '';
@@ -468,7 +484,6 @@ function initBlankForm() {
   state.loanType = 'first';
   $$('#typeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.type === 'first'));
   state.repayment = 'equal_installment';
-  $$('#repaySeg button').forEach((b) => b.classList.toggle('on', b.dataset.repay === 'equal_installment'));
 
   if (Array.isArray(d.customRates) && d.customRates.length) state.rates = d.customRates.slice();
   if (!state.rates.length) state.rates = [3.0, 3.1, 3.25, 3.5, 3.7];
@@ -519,6 +534,24 @@ function loadRecordIntoForm(rec, opts) {
 }
 
 /** 顶部「最近一次」卡片：没有记录就整张隐藏 */
+/** 记录时间统一按北京时间显示。
+ *  存量记录是 UTC ISO 串（带 Z）→ 解析后 +8 转北京时间；
+ *  新记录已是北京时间（无后缀）→ 直接截取。 */
+function fmtTime(s) {
+  const str = String(s || '');
+  if (!str) return '';
+  if (/[Zz]$/.test(str) || /[+-]\d{2}:?\d{2}$/.test(str)) {
+    const d = new Date(str);
+    if (!isNaN(d)) {
+      return d.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).replace(/\//g, '-');
+    }
+  }
+  return str.slice(0, 16).replace('T', ' ');
+}
+
 function renderRecentCard() {
   const card = $('#recentCard');
   if (!card) return;
@@ -527,7 +560,7 @@ function renderRecentCard() {
   card.hidden = false;
   card.dataset.id = String(rec.id);
   $('#recentName').textContent = rec.name;
-  const t = String(rec.updatedAt || '').slice(0, 16).replace('T', ' ');
+  const t = fmtTime(rec.updatedAt);
   $('#recentMeta').textContent = `${t} · ${recordMetaText(rec)}`;
 }
 
@@ -625,7 +658,7 @@ function render(r) {
     ${kpi('能提取的余额', wan(r.withdraw.safeLimit), ' 万', true)}
     ${kpi('每月自付现金', yuan(r.cashflow.cashMonthly), ' 元')}
   </div>
-  <p class="muted" style="margin-top:8px">「能提取的余额」= 提完之后公积金仍按 <b>${yuan(r.maxLoanGjj)} 元</b> 满贷的额度，同时不超过已付首期房款 ${yuan(r.withdraw.downPayment)} 元${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}。</p>`;
+  <p class="muted" style="margin-top:8px">「能提取的余额」= 提取后公积金额度公式仍支撑最高可贷 <b>${yuan(r.maxLoanGjj)} 元</b>${r.gjjAmount < r.maxLoanGjj ? `（本次实际只需 <b>${yuan(r.gjjAmount)} 元</b>，多提不会影响本次贷款，但会降将来追加贷款的上限）` : ''}的余额，同时不超过已付首期房款 ${yuan(r.withdraw.downPayment)} 元${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}。</p>`;
 
   /* ---- 预算上限：哪个约束卡住了 ---- */
   const pctOfCap = r.maxLoanGjj > 0 ? [
@@ -687,8 +720,8 @@ function render(r) {
         <tbody>
           ${(r.methods || []).map((m) => {
             const diff = m.totalInterest - (mInst.totalInterest || 0);
-            return `<tr class="${m.key === r.method ? 'hl' : ''}">
-              <td>${esc(m.label)}${m.key === r.method ? '（当前）' : ''}</td>
+            return `<tr>
+              <td>${esc(m.label)}</td>
               <td>${yuan(m.first)}</td>
               <td>${yuan(m.last)}</td>
               <td>${wan(m.totalPay)} 万</td>
@@ -705,26 +738,26 @@ function render(r) {
     const totalTerms = sch.reduce((s, x) => s + x.monthCount, 0);
     html += `<div class="sec-title">逐年月供对照表（${r.termYears} 年 · 共 ${totalTerms} 期 · 两种方式并列）</div>
     <div class="table-wrap">
-      <table style="min-width:880px">
+      <table class="sch">
         <thead>
           <tr>
             <th rowspan="2">年度</th>
-            <th colspan="3">等额本息${r.method === 'equal_installment' ? '（当前）' : ''}</th>
-            <th colspan="3">等额本金${r.method === 'equal_principal' ? '（当前）' : ''}</th>
+            <th colspan="3">等额本息</th>
+            <th colspan="3">等额本金</th>
           </tr>
           <tr>
-            <th>月供</th><th>当年还款</th><th>年末剩余本金</th>
-            <th>月供（首 → 末）</th><th>当年还款</th><th>年末剩余本金</th>
+            <th>月供</th><th class="c-yearpay">当年还款</th><th>年末剩余本金</th>
+            <th>月供（首 → 末）</th><th class="c-yearpay">当年还款</th><th>年末剩余本金</th>
           </tr>
         </thead>
         <tbody>
           ${sch.map((row) => `<tr>
             <td>第 ${row.year} 年<small>${row.monthCount} 期</small></td>
             <td>${yuan(row.installment.first)}</td>
-            <td>${yuan(row.installment.yearPay)}</td>
+            <td class="c-yearpay">${yuan(row.installment.yearPay)}</td>
             <td>${yuan(row.installment.endBalance)}</td>
-            <td>${yuan(row.principal.first)} → ${yuan(row.principal.last)}</td>
-            <td>${yuan(row.principal.yearPay)}</td>
+            <td>${yuan(row.principal.first)}<small>→ ${yuan(row.principal.last)}</small></td>
+            <td class="c-yearpay">${yuan(row.principal.yearPay)}</td>
             <td>${yuan(row.principal.endBalance)}</td>
           </tr>`).join('')}
         </tbody>
@@ -732,11 +765,11 @@ function render(r) {
           <tr class="hl">
             <td>合计</td>
             <td>—</td>
-            <td>${yuan(mInst.totalPay || 0)}</td>
-            <td>利息 ${wan(mInst.totalInterest || 0)} 万</td>
+            <td class="c-yearpay">—</td>
+            <td>${yuan(mInst.totalPay || 0)}<small>利息 ${wan(mInst.totalInterest || 0)} 万</small></td>
             <td>—</td>
-            <td>${yuan(mPrin.totalPay || 0)}</td>
-            <td>利息 ${wan(mPrin.totalInterest || 0)} 万</td>
+            <td class="c-yearpay">—</td>
+            <td>${yuan(mPrin.totalPay || 0)}<small>利息 ${wan(mPrin.totalInterest || 0)} 万</small></td>
           </tr>
         </tfoot>
       </table>
@@ -750,7 +783,7 @@ function render(r) {
     <div class="rows">
       <div class="row"><span class="rk">实际支付的首期房款</span><span class="rv">${yuan(r.withdraw.downPayment)} 元<small>总价 ${wan(r.totalPrice)} 万 − 贷款 ${wan(r.loanNeed)} 万${r.totalPriceDerived ? '（总价按贷款额反推）' : ''}</small></span></div>
       <div class="row"><span class="rk">${r.mode === 'couple' ? '两人' : '本人'}账户余额合计</span><span class="rv">${yuan(r.withdraw.totalBalance)} 元</span></div>
-      <div class="row"><span class="rk">能提取的余额<small>提取后仍按 ${yuan(r.maxLoanGjj)} 元满贷</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalance)}」三者最小值</small></span></div>
+      <div class="row"><span class="rk">能提取的余额<small>提取后最高可贷仍不低于 ${yuan(r.maxLoanGjj)} 元${r.gjjAmount < r.maxLoanGjj ? `（本次用 ${yuan(r.gjjAmount)}）` : ''}</small></span><span class="rv">${yuan(r.withdraw.safeLimit)} 元<small>取「余额合计 ${yuan(r.withdraw.totalBalance)}」「首期房款 ${yuan(r.withdraw.downPayment)}」「公式可动用余额 ${yuan(r.withdraw.formulaSlackBalance)}」三者最小值</small></span></div>
       <div class="row"><span class="rk">为保住满贷须留在账户里的余额</span><span class="rv">${yuan(r.withdraw.keepBalance)} 元<small>余额 ×${r.withdraw.balanceMultiplier} 计入额度公式，少了这块钱额度就从 ${yuan(r.maxLoanGjj)} 元往下掉</small></span></div>
       ${(r.withdraw.perPerson || []).map((p) => `<div class="row"><span class="rk">· ${esc(p.label)}</span><span class="rv">可提取 ${yuan(p.withdrawable)} 元<small>账户余额 ${yuan(p.balance)} 元 − 须保留 ${yuan(p.keep)} 元</small></span></div>`).join('')}
       <div class="row"><span class="rk">政策一次性提取上限</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>不超过实际支付的首期房款，也不超过账户余额</small></span></div>
@@ -767,7 +800,7 @@ function render(r) {
   html += `<div class="sec-title">期限与收入校验</div>
     <div class="rows">
       <div class="row"><span class="rk">可贷期限上限</span><span class="rv">${r.maxTermAllowed} 年<small>受 30 年上限、年龄、二手楼楼龄共同约束</small></span></div>
-      ${r.secondHandAge > 0 ? `<div class="row"><span class="rk">二手楼楼龄</span><span class="rv">${r.secondHandAge} 年<small>${esc(r.builtAt || '')} 建成；「期限 + 楼龄」≤ 50 年 → 期限最多 ${Math.max(0, Math.min(r.maxTermAllowed, 50 - r.secondHandAge))} 年</small></span></div>` : ''}
+      ${r.secondHandAge > 0 ? `<div class="row"><span class="rk">二手楼楼龄</span><span class="rv">${r.secondHandAge} 年<small>${r.builtAt ? `${esc(r.builtAt)} 建成；` : ''}「期限 + 楼龄」≤ 50 年 → 期限最多 ${Math.max(0, Math.min(r.maxTermAllowed, 50 - r.secondHandAge))} 年</small></span></div>` : ''}
       ${(r.termChecks || []).map((c) => `<div class="row"><span class="rk">· ${esc(c.label)}</span><span class="rv">年龄 ${c.age.years} 岁 ${c.age.remMonths} 个月<small>不超 ${c.limitAge} 岁 → 最多可贷 ${c.years} 年</small></span></div>`).join('')}
       ${r.income ? `
         <div class="row"><span class="rk">月还贷额 / 家庭收入 50% 上限</span>
@@ -835,7 +868,7 @@ function renderRecords() {
     <div class="record" data-id="${r.id}">
       <div class="record-top">
         <span class="record-name">${esc(r.name)}</span>
-        <span class="record-time">${esc(String(r.updatedAt).slice(0, 16).replace('T', ' '))}</span>
+        <span class="record-time">${esc(fmtTime(r.updatedAt))}</span>
       </div>
       <div class="record-meta">${esc(recordMetaText(r))}</div>
       <div class="record-actions">
@@ -1304,10 +1337,8 @@ function bindEvents() {
     runCalc({ quiet: true });
   }));
 
-  $$('#repaySeg button').forEach((b) => b.addEventListener('click', () => {
-    state.repayment = b.dataset.repay;
-    $$('#repaySeg button').forEach((x) => x.classList.toggle('on', x === b));
-    runCalc({ quiet: true });
+  $$('#builtSeg button').forEach((b) => b.addEventListener('click', () => {
+    setBuiltMode(b.dataset.bmode);
   }));
 
   $('#termYears').addEventListener('input', () => {
