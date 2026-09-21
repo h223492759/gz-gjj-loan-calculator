@@ -313,68 +313,82 @@ function calculate(input) {
   // 政策口径的一次性提取上限：不超过实际支付的首期房款，也不超过账户余额
   const onceLimit = yuan(Math.min(totalBalance, downPayment));
 
-  // 「提取后本次仍贷得下来」的可提取额：
-  //   提取后的公式额 = Σ[(余额 − 提取额) × 10] + Σ(月缴存额 × 到退休月数)
-  //   只要它还 ≥ 本次实际要贷的金额 gjjAmount，这次就贷得下来 ⇒
-  //   可动用余额 = (公式额合计 − 本次贷款额) ÷ 10，再受「账户余额」「首期房款」封顶。
-  //   （口径说明：按「本次实际需要」而非「最高可贷上限」，不做保留追加贷款能力的保守折算。）
-  const formulaSlackBalance = Math.max(0, yuan((formulaTotal - gjjAmount) / mult));
-  const slackRaw = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
-  // 向下取整到「元」再报数：余额是 ×10 进公式的，1 元余额 = 10 元额度。
-  // 报 82654.73 元这种带角分的数，用户照着填就会多提、额度掉几百元（×10 放大）；
-  // 取整到元宁可少提几角，也保证「照报出来的这个数提取，本次一定还贷得下来」。
-  const safeLimit = Math.max(0, yuanFloor(slackRaw));
-  const share = totalBalance > 0 ? totalBalance : 1;
-  const safePer = perPerson.map((p) => {
-    const own = totalBalance > 0 ? yuanFloor(safeLimit * (p.balance / share)) : 0;
-    return { label: p.label, balance: p.balance, withdrawable: own, keep: yuan(p.balance - own) };
-  });
-  const sumSafe = safePer.reduce((s, x) => s + x.withdrawable, 0);
-  const rem = safeLimit - sumSafe;   // 每人各自向下取整剩下的零头，0 ~ (人数−1) 元
-  if (rem !== 0 && safePer.length) {
-    // 零头补给余额最多的那个人（放不下就不补，宁少不多），保证「每人之和 = 合计」
-    const idx = safePer.reduce((best, x, i) => (x.balance > safePer[best].balance ? i : best), 0);
-    const canTake = Math.min(rem, yuanFloor(safePer[idx].balance) - safePer[idx].withdrawable);
-    if (canTake > 0) {
-      safePer[idx].withdrawable = yuan(safePer[idx].withdrawable + canTake);
-      safePer[idx].keep = yuan(safePer[idx].balance - safePer[idx].withdrawable);
+  // 计算「某目标贷款额」下的可提取余额：
+  //   提取后的公式额 = Σ[(余额 − 提取额) × 倍数] + Σ(月缴存额 × 到退休月数)
+  //   只要它还 ≥ 目标额，本次就贷得下来 ⇒ 可动用余额 = (公式额合计 − 目标额) ÷ 倍数，
+  //   再受「账户余额」「首期房款」封顶，并向下取整到「元」报数（余额 ×倍数 进公式，1 元 = 倍数 元额度）。
+  const buildScenario = (target) => {
+    const formulaSlackBalance = Math.max(0, yuan((formulaTotal - target) / mult));
+    const slackRaw = yuan(Math.min(totalBalance, downPayment, formulaSlackBalance));
+    const safeLimit = Math.max(0, yuanFloor(slackRaw));
+    const share = totalBalance > 0 ? totalBalance : 1;
+    const safePer = perPerson.map((p) => {
+      const own = totalBalance > 0 ? yuanFloor(safeLimit * (p.balance / share)) : 0;
+      return { label: p.label, balance: p.balance, withdrawable: own, keep: yuan(p.balance - own) };
+    });
+    const sumSafe = safePer.reduce((s, x) => s + x.withdrawable, 0);
+    const rem = safeLimit - sumSafe;   // 每人各自向下取整剩下的零头，0 ~ (人数−1) 元
+    if (rem !== 0 && safePer.length) {
+      // 零头补给余额最多的那个人（放不下就不补，宁少不多），保证「每人之和 = 合计」
+      const idx = safePer.reduce((best, x, i) => (x.balance > safePer[best].balance ? i : best), 0);
+      const canTake = Math.min(rem, yuanFloor(safePer[idx].balance) - safePer[idx].withdrawable);
+      if (canTake > 0) {
+        safePer[idx].withdrawable = yuan(safePer[idx].withdrawable + canTake);
+        safePer[idx].keep = yuan(safePer[idx].balance - safePer[idx].withdrawable);
+      }
     }
-  }
-  const keepBalance = yuan(totalBalance - safeLimit);
-
-  // 复核：按报出来的这个数提走之后，公式额还剩多少、够不够本次这一笔
-  const afterFormula = yuan(formulaTotal - safeLimit * mult);
-  const afterWithdraw = {
-    withdraw: safeLimit,
-    formulaTotal: afterFormula,
-    needed: yuan(gjjAmount),
-    stillCovers: afterFormula >= gjjAmount - 0.005,
-    margin: yuan(afterFormula - gjjAmount),
-    text: afterFormula >= gjjAmount - 0.005
-      ? `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后，额度公式仍有 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，不低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元（余量 ${yuan(afterFormula - gjjAmount).toLocaleString('zh-CN')} 元）。`
-      : `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后额度公式只剩 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，已低于本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元。`
+    const keepBalance = yuan(totalBalance - safeLimit);
+    const afterFormula = yuan(formulaTotal - safeLimit * mult);
+    const afterWithdraw = {
+      withdraw: safeLimit,
+      formulaTotal: afterFormula,
+      needed: yuan(target),
+      stillCovers: afterFormula >= target - 0.005,
+      margin: yuan(afterFormula - target),
+      text: afterFormula >= target - 0.005
+        ? `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后，额度公式仍有 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，不低于目标 ${yuan(target).toLocaleString('zh-CN')} 元（余量 ${yuan(afterFormula - target).toLocaleString('zh-CN')} 元）。`
+        : `提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元后额度公式只剩 ${yuan(afterFormula).toLocaleString('zh-CN')} 元，已低于目标 ${yuan(target).toLocaleString('zh-CN')} 元。`
+    };
+    return { formulaSlackBalance, slackRaw, safeLimit, perPerson: safePer, keepBalance, afterWithdraw };
   };
+
+  // 两套口径：
+  //   · 满贷口径（full）：目标 = maxLoanGjj（含上浮的可贷上限，如本次上浮后 220 万），提走后仍有最高可贷能力
+  //   · 本次输入口径（input）：目标 = loanNeed（你在表单里填写的贷款金额，如 200 万），提走后仍贷得下你填的这笔
+  const full = buildScenario(maxLoanGjj);
+  const byInput = buildScenario(loanNeed);
 
   const withdraw = {
     downPayment,
     totalBalance,
     onceLimit,
     balanceMultiplier: mult,
-    formulaSlackBalance,
-    slackRaw,
     bindingKey: binding.key,
-    safeLimit,
-    afterWithdraw,
-    keepBalance,
-    remainInAccount: keepBalance,
+    // 满贷口径（保留最高可贷能力，上限含上浮）
+    formulaSlackBalance: full.formulaSlackBalance,
+    slackRaw: full.slackRaw,
+    safeLimit: full.safeLimit,
+    afterWithdraw: full.afterWithdraw,
+    keepBalance: full.keepBalance,
+    perPerson: full.perPerson,
+    // 本次输入口径（按你填写的贷款金额）
+    formulaSlackBalanceInput: byInput.formulaSlackBalance,
+    slackRawInput: byInput.slackRaw,
+    safeLimitInput: byInput.safeLimit,
+    afterWithdrawInput: byInput.afterWithdraw,
+    keepBalanceInput: byInput.keepBalance,
+    perPersonInput: byInput.perPerson,
+    remainInAccount: byInput.keepBalance,
     totalLimit: yuan(totalPrice + total.totalInterest),
-    perPerson: safePer,
     note: cfg.withdraw.once_limit
   };
-  if (safeLimit > 0) {
-    notes.push(`账户余额有富余：合计可提取 ${yuan(safeLimit).toLocaleString('zh-CN')} 元（已向下取整到元，${afterWithdraw.text}）。`);
+  if (byInput.safeLimit > 0) {
+    const parts = [];
+    if (full.safeLimit > 0) parts.push(`保留满贷能力（上限 ${yuan(maxLoanGjj).toLocaleString('zh-CN')} 元）口径合计可提取 ${yuan(full.safeLimit).toLocaleString('zh-CN')} 元`);
+    parts.push(`按本次贷款 ${yuan(loanNeed).toLocaleString('zh-CN')} 元口径合计可提取 ${yuan(byInput.safeLimit).toLocaleString('zh-CN')} 元`);
+    notes.push(`账户余额有富余：${parts.join('；')}（已向下取整到元）。${byInput.afterWithdraw.text}`);
   } else if (binding.key === 'formula') {
-    notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元；本次要贷的 ${yuan(gjjAmount).toLocaleString('zh-CN')} 元已把公式额用尽，因此当前可提取额为 0。`);
+    notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元；公积金满贷上限 ${yuan(maxLoanGjj).toLocaleString('zh-CN')} 元已把公式额用尽，因此当前可提取额为 0。`);
   }
 
   /* ---------------- 10. 月度现金流（公积金账户抵扣） ---------------- */
@@ -409,27 +423,14 @@ function calculate(input) {
     };
   }
 
-  /* ---------------- 11. 方案对比（多商贷利率 + 两种还款方式） ---------------- */
-  const rates = [];
-  const pushRate = (rate, label) => {
-    const r = Number(rate);
-    if (!(r > 0)) return;
-    const v = r > 1 ? r / 100 : r;
-    if (rates.some((x) => Math.abs(x.rate - v) < 1e-9)) return;
-    rates.push({ rate: v, label: label || `商贷 ${(v * 100).toFixed(3).replace(/\.?0+$/, '')}%` });
-  };
-  (Array.isArray(input.customRates) ? input.customRates : []).forEach((r) => pushRate(r, typeof r === 'object' ? r.label : null));
-  if (!rates.length || !rates.some((x) => Math.abs(x.rate - commercialRate) < 1e-9)) {
-    pushRate(commercialRate, '当前商贷利率');
-  }
-
+  /* ---------------- 11. 方案对比（商贷单选 + 两种还款方式） ---------------- */
   const plans = buildPlans({
-    rates, loanNeed, maxLoanGjj, gr, termYears, months, method, cfg
+    commercialRate, loanNeed, maxLoanGjj, gr, termYears, months, method, cfg
   });
   // 期初公积金账户余额按「上面建议提取后留在账户里的钱」起算
   const sched = buildSchedule({
     gjjAmount, commercialAmount, gjjRate: gr.rate, commRate: commercialRate, months,
-    acc0: withdraw ? withdraw.keepBalance : 0,
+    acc0: withdraw ? withdraw.keepBalanceInput : 0,
     monthlyDeposit
   });
   const schedule = sched.rows;
@@ -498,41 +499,45 @@ function calculate(input) {
 }
 
 /** 不同商贷利率下的方案对比 */
-function buildPlans({ rates, loanNeed, maxLoanGjj, gr, termYears, months, method, cfg }) {
+function buildPlans({ commercialRate, loanNeed, maxLoanGjj, gr, termYears, months, method }) {
   const rows = [];
+  const gjj = Math.min(loanNeed, maxLoanGjj);
+  const comm = Math.max(0, loanNeed - gjj);
+  const rateLabel = (v) => `${(v * 100).toFixed(3).replace(/\.?0+$/, '')}%`;
+
+  // 纯公积金：不借用商贷（公积金能覆盖就满贷，覆盖不了差额也只算公积金部分）
   rows.push({
     key: 'pure_gjj',
     label: '纯公积金（不借用商贷）',
     commercialRate: null,
-    gjjAmount: Math.min(loanNeed, maxLoanGjj),
-    commercialAmount: Math.max(0, loanNeed - maxLoanGjj),
+    gjjAmount: gjj,
+    commercialAmount: 0,
     feasible: loanNeed <= maxLoanGjj + 1,
-    ...summarize(Math.min(loanNeed, maxLoanGjj), Math.max(0, loanNeed - maxLoanGjj), gr.rate, null, months, method)
+    ...summarize(gjj, 0, gr.rate, null, months, method)
   });
 
-  rates.forEach((r) => {
-    const gjj = Math.min(loanNeed, maxLoanGjj);
-    const comm = Math.max(0, loanNeed - gjj);
+  // 组合贷：仅按当前选中的商贷利率出一行（商贷是单选，不遍历利率预设，避免重复行）
+  if (comm > 0) {
     rows.push({
-      key: `rate_${r.rate}`,
-      label: comm > 0 ? `组合贷 · ${r.label}` : `纯公积金（${r.label} 用不上）`,
-      commercialRate: r.rate,
+      key: 'combo',
+      label: `组合贷（商贷 ${rateLabel(commercialRate)}）`,
+      commercialRate,
       gjjAmount: gjj,
       commercialAmount: comm,
       feasible: true,
-      ...summarize(gjj, comm, gr.rate, r.rate, months, method)
+      ...summarize(gjj, comm, gr.rate, commercialRate, months, method)
     });
-  });
+  }
 
-  // 纯商贷（极端对照：公积金一分不用）
+  // 纯商贷（极端对照：公积金一分不用），同样用当前选中的商贷利率
   rows.push({
     key: 'pure_commercial',
     label: '纯商贷（住房公积金一分不贷）',
-    commercialRate: rates[0] ? rates[0].rate : cfg.commercial.presets[0].rate,
+    commercialRate,
     gjjAmount: 0,
     commercialAmount: loanNeed,
     feasible: true,
-    ...summarize(0, loanNeed, gr.rate, rates[0] ? rates[0].rate : cfg.commercial.presets[0].rate, months, method)
+    ...summarize(0, loanNeed, gr.rate, commercialRate, months, method)
   });
 
   return { termYears, rows };

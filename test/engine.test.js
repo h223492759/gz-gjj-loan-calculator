@@ -205,14 +205,18 @@ it('提取额度 = min(账户余额, 实际支付的首期房款)', () => {
   assert.strictEqual(r.withdraw.downPayment, 1100000);
   assert.strictEqual(r.withdraw.totalBalance, 148000);
   assert.strictEqual(r.withdraw.onceLimit, 148000, '余额少于首付 → 一次性提取上限为全部余额');
-  assert.strictEqual(r.withdraw.safeLimit, 145840, '按本次实际要贷的 150 万算，富余的余额可以提走');
-  assert.strictEqual(r.withdraw.keepBalance, 2160, '提完后还得留下撑住公式额的那部分');
+  assert.strictEqual(r.withdraw.safeLimitInput, 145840, '按本次实际要贷的 150 万算，富余的余额可以提走');
+  assert.strictEqual(r.withdraw.keepBalanceInput, 2160, '提完后还得留下撑住公式额的那部分');
   assert.strictEqual(r.withdraw.remainInAccount, 2160);
 
-  // 口径钉子：能提取多少按「本次实际贷款额」，不是「最高可贷上限」
+  // 满贷口径（保留最高可贷能力，上限含上浮）：本次只贷 150 万时上限仍是 200 万，因此只能提 9.584 万
+  assert.strictEqual(r.withdraw.safeLimit, 95840, '满贷口径（保留 200 万上限）能提 9.584 万');
+  assert.strictEqual(r.withdraw.keepBalance, 52160, '保留满贷须多留账户余额');
+
+  // 口径钉子：本次输入口径按「本次实际贷款额」，不是「最高可贷上限」
   const full = calculate({ ...base, loanNeed: 2000000 });   // 贷满上限 200 万
-  assert.strictEqual(full.withdraw.safeLimit, 95840, '贷到上限时只能提走 9.584 万');
-  assert.strictEqual(r.withdraw.safeLimit - full.withdraw.safeLimit, 50000, '少贷 50 万 → 多提 5 万（(200万−150万)÷10）');
+  assert.strictEqual(full.withdraw.safeLimitInput, 95840, '本次贷款 200 万时仍只能提 9.584 万');
+  assert.strictEqual(r.withdraw.safeLimitInput - full.withdraw.safeLimitInput, 50000, '少贷 50 万 → 多提 5 万（(200万−150万)÷10）');
 
   // 首付很小、余额很大的情形
   const r2 = calculate({
@@ -300,23 +304,33 @@ it('公积金账户可覆盖月供时，现金支出被正确冲抵', () => {
   assert.ok(r.cashflow.cashMonthly >= 0);
 });
 
-it('方案对比表覆盖预设利率且无重复', () => {
+it('方案对比表：商贷单选，无重复行，每行金额之和对得上', () => {
   const r = calculate(base);
   const rows = r.plans.rows;
-  assert.ok(rows.length >= 4);
-  const rateRows = rows.filter((x) => x.key.startsWith('rate_'));
-  assert.strictEqual(rateRows.length, 2, '应生成 2 档商贷利率方案');
-  const seen = new Set();
-  rateRows.forEach((x) => {
-    assert.ok(!seen.has(x.commercialRate), '利率重复');
-    seen.add(x.commercialRate);
-  });
+  // 旧设计会按每个利率预设各出一行（rate_xxx），单选后不应再出现
+  assert.strictEqual(rows.filter((x) => x.key.startsWith('rate_')).length, 0, '不应再按利率预设逐行展开');
+  // 必有：纯公积金、纯商贷
+  const pure = rows.find((x) => x.key === 'pure_commercial');
+  assert.ok(pure, '应有纯商贷行');
+  assert.strictEqual(pure.gjjAmount, 0);
+  assert.strictEqual(pure.commercialAmount, base.loanNeed);
+  assert.ok(rows.find((x) => x.key === 'pure_gjj'), '应有纯公积金行');
+  // 无重复 key
+  const keys = rows.map((x) => x.key);
+  assert.strictEqual(new Set(keys).size, keys.length, '存在重复行 key');
+  // 每行公积金 + 商贷 = 本次贷款额
   rows.forEach((x) => {
     assert.ok(near(x.gjjAmount + x.commercialAmount, base.loanNeed, 1), `${x.label} 金额对不上`);
   });
-  const pure = rows.find((x) => x.key === 'pure_commercial');
-  assert.strictEqual(pure.gjjAmount, 0);
-  assert.strictEqual(pure.commercialAmount, base.loanNeed);
+  // 公积金能覆盖时（base 满贷 200 万 ≥ 贷款 200 万）不应出现组合贷行
+  assert.strictEqual(rows.find((x) => x.key === 'combo'), undefined, '公积金全覆盖时不应有组合贷行');
+
+  // 超额场景：贷款额超过满贷上限 → 只出现一行组合贷，且用「当前选中的商贷利率」
+  const over = calculate({ ...base, loanNeed: 2400000, commercialRate: 3.5 });
+  const combo = over.plans.rows.find((x) => x.key === 'combo');
+  assert.ok(combo, '超额时应有组合贷行');
+  assert.strictEqual(combo.commercialRate, 0.035, '组合贷行必须用选中的商贷利率，不遍历预设');
+  assert.ok(Math.abs(combo.gjjAmount + combo.commercialAmount - 2400000) < 1, '组合贷行金额之和应等于贷款额');
 });
 
 it('还款方式对比：等额本金总利息少于等额本息', () => {
@@ -502,7 +516,7 @@ it('额度被公式本身卡住时，本次要贷的金额已用尽公式额 →
   assert.ok(r.notes.some((n) => /公式额用尽/.test(n)), '要说明为什么不能提');
 });
 
-it('可提取额必须报「整元」：照报出来的数提走，本次一定还贷得下来（余额 ×10 进公式，带角分会放大成几百元额度差）', () => {
+it('可提取额必须报「整元」：两套口径各自照报数提走都贷得下来，多提 100 元就破防（余额 ×10 进公式，带角分会放大成几百元额度差）', () => {
   const mk = (b2) => calculate({
     ...base,
     houseTotalPrice: 0,
@@ -514,15 +528,25 @@ it('可提取额必须报「整元」：照报出来的数提走，本次一定�
     ]
   });
   const r = mk(169724.88);
-  const w = r.withdraw.safeLimit;
-  assert.strictEqual(w, Math.floor(w), `可提取额 ${w} 必须是整元，不能报带角分的数`);
-  assert.ok(r.withdraw.slackRaw - w < 1, `报数 ${w} 与精确上限 ${r.withdraw.slackRaw} 相差不该超过 1 元`);
-  assert.strictEqual(r.withdraw.afterWithdraw.stillCovers, true, '复核必须判定为「仍贷得下来」');
-  // 照报出来的数提走 → 仍然满贷 200 万
-  const after = mk(169724.88 - w);
-  assert.ok(after.maxLoanGjj >= 2000000, `照报出的 ${w} 元提走后只剩 ${after.maxLoanGjj}，贷不满 200 万`);
-  // 反向钉住：多提 100 元就会掉 1000 元额度 —— 这就是不能报「8.27 万」这种模糊数的原因
-  assert.ok(mk(169724.88 - (w + 100)).maxLoanGjj < 2000000, '多提 100 元就该贷不满，说明报数也没保守过头');
+  const wFull = r.withdraw.safeLimit;        // 满贷口径（上限 220 万）
+  const wInput = r.withdraw.safeLimitInput;  // 本次输入口径（本次 200 万）
+  assert.strictEqual(wFull, Math.floor(wFull), `满贷口径可提取额 ${wFull} 必须是整元`);
+  assert.strictEqual(wInput, Math.floor(wInput), `本次输入口径可提取额 ${wInput} 必须是整元`);
+  assert.ok(r.withdraw.slackRaw - wFull < 1, `满贷报数 ${wFull} 与精确上限 ${r.withdraw.slackRaw} 相差不该超过 1 元`);
+  assert.strictEqual(r.withdraw.afterWithdraw.stillCovers, true, '满贷复核必须判定为「仍撑得住」');
+  assert.strictEqual(r.withdraw.afterWithdrawInput.stillCovers, true, '本次输入复核必须判定为「仍贷得下本次」');
+
+  // 满贷口径：照报出来的数提走 → 仍然满贷（上限 220 万）
+  const afterFull = mk(169724.88 - wFull);
+  assert.ok(afterFull.maxLoanGjj >= 2200000, `照报出的满贷数 ${wFull} 元提走后只剩 ${afterFull.maxLoanGjj}，满贷能力丢了`);
+  // 多提 100 元就跌破 220 万天花板 —— 说明报数没保守过头
+  assert.ok(mk(169724.88 - (wFull + 100)).maxLoanGjj < 2200000, '满贷口径多提 100 元就该跌破上限，说明报数没保守过头');
+
+  // 本次输入口径：照报出来的数提走 → 仍然贷得下本次 200 万
+  const afterInput = mk(169724.88 - wInput);
+  assert.ok(afterInput.maxLoanGjj >= 2000000, `照报出的本次数 ${wInput} 元提走后只剩 ${afterInput.maxLoanGjj}，本次 200 万贷不满`);
+  // 多提 100 元就跌破 200 万 —— 说明报数没保守过头
+  assert.ok(mk(169724.88 - (wInput + 100)).maxLoanGjj < 2000000, '本次输入口径多提 100 元就该贷不满，说明报数没保守过头');
 });
 
 it('逐年月供对照表：最多 30 行，末期归零，逐年累加等于总额', () => {

@@ -488,6 +488,8 @@ tr.hl td { background: var(--accent-soft); font-weight: 600; }
 .row .rk { color: var(--muted); flex: none; }
 .row .rv { text-align: right; font-weight: 600; }
 .row .rv small { display: block; font-weight: 400; color: var(--faint); font-size: 11.5px; }
+.row.hl-row { background: var(--accent-soft); }
+.row.hl-row .rk { color: var(--text); font-weight: 600; }
 
 .alert {
   border-radius: var(--radius-sm); padding: 11px 13px; font-size: 13px;
