@@ -202,13 +202,22 @@ async function doLogoutAll() {
 
 /* ------------------------------- 主题 ------------------------------- */
 
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  // 同步浏览器地址栏 / 状态栏配色，手机上不至于「黑底配亮条」
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t === 'dark' ? '#15151A' : '#F6F6F3');
+}
+
 function initTheme() {
+  // 首屏主题已在 index.html 的 head 内联脚本里定好（避免深色模式白闪），
+  // 这里只按同一规则再确认一次，并接管手动切换。
   const saved = localStorage.getItem('gzgjj-theme');
   const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.dataset.theme = saved || (prefersDark ? 'dark' : 'light');
+  applyTheme(saved || (prefersDark ? 'dark' : 'light'));
   $('#themeBtn').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
+    applyTheme(next);
     localStorage.setItem('gzgjj-theme', next);
   });
 }

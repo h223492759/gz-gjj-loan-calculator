@@ -586,6 +586,14 @@ body.locked .lock { display: flex; }
 .pill-bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: var(--bad-bg); }
 .pill-ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, var(--line)); background: var(--good-bg); }
 
+/* ------------------------------- 触屏体验 ------------------------------- */
+
+/* 横竖屏切换时不要自动放大字号；点按按钮不要出现 iOS 的灰色方块 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, .btn, .tab, .chip, .icon-btn, a, label, summary, input[type="range"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ------------------------------- 手机端 ------------------------------- */
 
 @media (max-width: 1023px) {
@@ -593,6 +601,13 @@ body.locked .lock { display: flex; }
 }
 @media (max-width: 720px) {
   body { font-size: 14.5px; }
+  /* iOS Safari 对字号 < 16px 的输入框会「一聚焦就放大整页」，
+     手机上每点一次输入框页面就跳一下，必须把触屏端字号提到 16px 才不触发。 */
+  input[type="number"], input[type="month"], input[type="text"], input[type="password"], select, textarea {
+    font-size: 16px;
+    padding: 10px 12px;
+    min-height: 44px;          /* 44px = 手指点按的舒适下限 */
+  }
   .topbar-inner { padding: 10px 14px 4px; }
   .brand h1 { font-size: 15px; }
   .brand-sub { display: none; }

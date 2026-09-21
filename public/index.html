@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="广州住房公积金买房贷款测算器 —— 完全离线、数据保存在本地">
+<meta name="theme-color" content="#F6F6F3">
+<script>
+/* 尽早定主题：放到 <body> 之后执行的话，深色模式下会先闪一下白底再变黑。
+   放在 head 里同步执行，首屏就是正确配色。 */
+(function () {
+  try {
+    var s = localStorage.getItem('gzgjj-theme');
+    var d = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var t = s || (d ? 'dark' : 'light');
+    document.documentElement.dataset.theme = t;
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', t === 'dark' ? '#15151A' : '#F6F6F3');
+  } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略即可 */ }
+})();
+</script>
 <title>广州公积金买房贷款测算器</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
