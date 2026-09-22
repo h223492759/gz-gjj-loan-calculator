@@ -954,9 +954,32 @@ function render(r) {
       ${r.income ? `
         <div class="row"><span class="rk">月还贷额 / 家庭收入 50% 上限</span>
           <span class="rv">${yuan(r.income.monthlyDue)} / ${yuan(r.income.budget)} 元<small>${r.income.ok ? '✅ 未超限' : `❌ 超出 ${yuan(r.income.overBy)} 元`}</small></span></div>
+        <div class="row"><span class="rk">月缴存合计（先抵扣月供）</span><span class="rv">${yuan(r.income.depositSum)} 元<small>两人每月缴存先冲还贷，实付现金部分才与收入上限比较</small></span></div>
         <div class="row"><span class="rk">按收入推算的可贷上限</span><span class="rv">${wan(r.income.maxLoanByIncome)} 万<small>${r.income.achieved ? '可覆盖本次贷款需求' : '不足以覆盖，需延长期限或降低贷款额'}</small></span></div>`
       : `<div class="row"><span class="rk">收入校验</span><span class="rv">已跳过<small>未填家庭月收入</small></span></div>`}
     </div>`;
+
+  /* ---- 收入占比四档对照表 ---- */
+  if (r.income && r.income.tiers) {
+    html += `<div class="sec-title">收入占比对照（${r.termYears} 年期 · 等额本息）</div>
+    <div class="table-wrap">
+      <table class="inc-tier">
+        <thead><tr>
+          <th>收入占比</th><th>月供上限</th><th>扣公积金后月供上限</th><th class="c-purecap">可贷上限<br>（月供口径）</th><th>可贷上限<br>（扣公积金口径）</th>
+        </tr></thead>
+        <tbody>
+          ${r.income.tiers.map((t) => `<tr>
+            <td><b>${(t.ratio * 100).toFixed(0)}%</b></td>
+            <td>${yuan(t.budget)} 元</td>
+            <td>${yuan(t.budgetAfterGjj)} 元</td>
+            <td class="c-purecap">${wan(t.maxLoan)} 万</td>
+            <td>${wan(t.maxLoanAfterGjj)} 万</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">「扣公积金」口径：每月缴存 ${yuan(r.income.depositSum)} 元先抵扣月供，实付现金 ≤ 收入×占比（月供上限因此放宽为 收入×占比 + 月缴存）；可贷上限 = 按对应月供上限反推的公积金拉满 + 商贷补足组合。</p>`;
+  }
 
   /* ---- 提示 ---- */
   if (warnList.length) {

@@ -303,6 +303,25 @@ function calculate(input) {
     const payGjj = payment(pGjj, gr.rate, months, method);
     const remain = Math.max(0, budget - (method === 'equal_principal' ? payGjj.first : payGjj.monthly));
     const pComm = principalByPayment(remain, commercialRate, months, method);
+    // 四档收入占比对照（50/40/30/20%）：
+    //   月供口径：月供 ≤ 家庭月收入 × 占比；
+    //   扣公积金口径：月供 − 月缴存 ≤ 家庭月收入 × 占比，即月供 ≤ 收入×占比 + 月缴存
+    //     （每月缴存先冲还贷，实付现金部分才与收入上限比）。
+    //   可贷上限 = 按对应月供上限反推「公积金拉满 + 剩余商贷」的组合总额。
+    const depositSum = yuan(perPerson.reduce((s, p) => s + p.monthlyDeposit, 0));
+    const capLoan = (payCap) => {
+      const pG = Math.min(maxLoanGjj, principalByPayment(payCap, gr.rate, months, method));
+      const pay = payment(pG, gr.rate, months, method);
+      const rem = Math.max(0, payCap - (method === 'equal_principal' ? pay.first : pay.monthly));
+      return yuan(pG + principalByPayment(rem, commercialRate, months, method));
+    };
+    const tiers = [0.5, 0.4, 0.3, 0.2].map((ratio) => ({
+      ratio,
+      budget: yuan(familyIncome * ratio),
+      budgetAfterGjj: yuan(familyIncome * ratio + depositSum),
+      maxLoan: capLoan(familyIncome * ratio),
+      maxLoanAfterGjj: capLoan(familyIncome * ratio + depositSum)
+    }));
     income = {
       familyIncome,
       ratioLimit: cfg.loan.income_ratio_limit,
@@ -311,7 +330,9 @@ function calculate(input) {
       ok: total.first <= budget + 1,
       overBy: yuan(Math.max(0, total.first - budget)),
       maxLoanByIncome: yuan(pGjj + pComm),
-      achieved: loanNeed <= pGjj + pComm + 1
+      achieved: loanNeed <= pGjj + pComm + 1,
+      depositSum,
+      tiers
     };
     if (!income.ok) {
       warnings.push(`首月月供 ${yuan(total.first).toLocaleString('zh-CN')} 元超过家庭月收入的 50%（${yuan(budget).toLocaleString('zh-CN')} 元）。按此收入水平，可贷上限约 ${(income.maxLoanByIncome / 10000).toFixed(1)} 万元，可考虑延长期限、降低贷款额或补充共同还款人。`);

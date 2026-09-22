@@ -360,8 +360,9 @@ it('参数时效的基准日必须是完整日期（曾因只到月而显示「�
     `ageDays 应为非负整数，实际 ${r.freshness.ageDays}`);
   assert.ok(!/距今 -\d/.test(r.freshness.text), r.freshness.text);
 
-  // 参数复核日 == 今天 → 文案里是「距今 0 天」
-  const same = R.freshness(R.todayStr());
+  // 基准日 = 参数复核日当天 → 距今 0 天（不能拿「今天」当基准日断言 0：
+  // 参数复核日一过，距今就是 1、2…天，断言会跨天假失败——2026-09-22 实测踩坑）
+  const same = R.freshness(R.rules().as_of);
   assert.strictEqual(same.ageDays, 0);
   assert.ok(/距今 0 天/.test(same.text), same.text);
 });
@@ -617,6 +618,27 @@ it('锁二算一：只给首付金额（不给比例/总价）→ 总价=贷款+
   // 金额换算出的比例低于政策下限要告警（如贷 220 万只付 20 万）
   const r2 = calculate({ ...base, loanNeed: 2200000, houseTotalPrice: 0, downRatio: null, downAmount: 200000 });
   assert.ok(r2.warnings.some((w) => /低于现行最低/.test(w)), '首付占比低于政策下限应有警告');
+});
+
+it('收入占比四档对照：50/40/30/20% 齐全，扣公积金口径 ≥ 纯口径，50% 档与 maxLoanByIncome 一致', () => {
+  const r = calculate({ ...base, loanNeed: 2000000, familyMonthlyIncome: 14000 });
+  const t = r.income && r.income.tiers;
+  assert.ok(t && t.length === 4, '应有四档对照');
+  assert.deepStrictEqual(t.map((x) => x.ratio), [0.5, 0.4, 0.3, 0.2], '档位应为 50/40/30/20%');
+  // 月供上限 = 收入 × 占比；扣公积金口径再放宽一个月缴存
+  const dep = r.income.depositSum;
+  assert.ok(dep > 0, '月缴存合计应 > 0');
+  t.forEach((x) => {
+    assert.ok(near(x.budget, r.income.familyIncome * x.ratio, 1), `${x.ratio} 档月供上限错`);
+    assert.ok(near(x.budgetAfterGjj, r.income.familyIncome * x.ratio + dep, 1), `${x.ratio} 档扣公积金月供上限错`);
+    assert.ok(x.maxLoanAfterGjj >= x.maxLoan - 1, `${x.ratio} 档扣公积金口径可贷上限不应低于纯口径`);
+  });
+  // 可贷上限随档位收紧单调不增（50% 最宽 → 20% 最严）
+  for (let i = 1; i < t.length; i++) {
+    assert.ok(t[i].maxLoanAfterGjj <= t[i - 1].maxLoanAfterGjj + 1, '档位越紧可贷上限应不减（即前一档应更高）');
+  }
+  // 50% 档与主结果里的 maxLoanByIncome 同口径
+  assert.ok(near(t[0].maxLoan, r.income.maxLoanByIncome, 1), '50% 档应与 maxLoanByIncome 一致');
 });
 
 /* ------------------------------ 执行 ------------------------------ */

@@ -477,6 +477,17 @@ table.sch td small, table.sch tfoot td small { display: block; font-weight: 400;
   table.sch th:first-child, table.sch td:first-child { min-width: 0; }
 }
 
+/* 收入占比对照表：窄屏收起「可贷上限（月供口径）」列（50% 那档在提示文本里已有） */
+table.inc-tier { min-width: 0; white-space: nowrap; }
+table.inc-tier th, table.inc-tier td { padding: 6px 8px; text-align: right; }
+table.inc-tier th:first-child, table.inc-tier td:first-child { text-align: left; }
+.table-note { font-size: 12px; color: var(--faint); margin-top: 6px; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  table.inc-tier { font-size: 12px; }
+  table.inc-tier th, table.inc-tier td { padding: 5px 6px; }
+  table.inc-tier .c-purecap { display: none; }
+}
+
 /* 更窄的屏连「年末剩余本金」一起收起，保证「每月实付」这两列看得见 */
 @media (max-width: 560px) {
   table.sch .c-endbal { display: none; }
