@@ -620,11 +620,11 @@ it('锁二算一：只给首付金额（不给比例/总价）→ 总价=贷款+
   assert.ok(r2.warnings.some((w) => /低于现行最低/.test(w)), '首付占比低于政策下限应有警告');
 });
 
-it('收入占比四档对照：50/40/30/20% 齐全，扣公积金口径 ≥ 纯口径，50% 档与 maxLoanByIncome 一致', () => {
+it('收入占比十档对照：50% 起每 5% 到 5% 齐全，扣公积金口径 ≥ 纯口径，50% 档与 maxLoanByIncome 一致', () => {
   const r = calculate({ ...base, loanNeed: 2000000, familyMonthlyIncome: 14000 });
   const t = r.income && r.income.tiers;
-  assert.ok(t && t.length === 4, '应有四档对照');
-  assert.deepStrictEqual(t.map((x) => x.ratio), [0.5, 0.4, 0.3, 0.2], '档位应为 50/40/30/20%');
+  assert.ok(t && t.length === 10, '应有十档对照');
+  assert.deepStrictEqual(t.map((x) => x.ratio), [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05], '档位应为 50% 起每 5% 到 5%');
   // 月供上限 = 收入 × 占比；扣公积金口径再放宽一个月缴存
   const dep = r.income.depositSum;
   assert.ok(dep > 0, '月缴存合计应 > 0');

@@ -303,7 +303,7 @@ function calculate(input) {
     const payGjj = payment(pGjj, gr.rate, months, method);
     const remain = Math.max(0, budget - (method === 'equal_principal' ? payGjj.first : payGjj.monthly));
     const pComm = principalByPayment(remain, commercialRate, months, method);
-    // 四档收入占比对照（50/40/30/20%）：
+    // 十档收入占比对照（50% 起每 5% 一档到 5%）：
     //   月供口径：月供 ≤ 家庭月收入 × 占比；
     //   扣公积金口径：月供 − 月缴存 ≤ 家庭月收入 × 占比，即月供 ≤ 收入×占比 + 月缴存
     //     （每月缴存先冲还贷，实付现金部分才与收入上限比）。
@@ -315,7 +315,7 @@ function calculate(input) {
       const rem = Math.max(0, payCap - (method === 'equal_principal' ? pay.first : pay.monthly));
       return yuan(pG + principalByPayment(rem, commercialRate, months, method));
     };
-    const tiers = [0.5, 0.4, 0.3, 0.2].map((ratio) => ({
+    const tiers = Array.from({ length: 10 }, (_, i) => Math.round((0.5 - i * 0.05) * 100) / 100).map((ratio) => ({
       ratio,
       budget: yuan(familyIncome * ratio),
       budgetAfterGjj: yuan(familyIncome * ratio + depositSum),

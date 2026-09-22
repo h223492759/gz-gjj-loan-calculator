@@ -975,7 +975,7 @@ function render(r) {
       <div class="row"><span class="rk">各约束上限<small>推荐 = 需求与各上限的最小值</small></span>
         <span class="rv">公积金 ${wan(rec.caps.gjj)} 万 · 首付约束 ${wan(rec.caps.price)} 万${rec.caps.income != null ? ` · 收入 50% ${wan(rec.caps.income)} 万` : ' · 未填收入，收入上限未计'}</span></div>
     </div>
-    ${rec.caps.income != null ? `<p class="table-note">收入口径按家庭月收入的 <b>50%</b>（即「月供超收入 50%」提示里的那条线）；想更保守可对照下方 40% / 30% / 20% 档的可贷上限。</p>` : ''}`;
+    ${rec.caps.income != null ? `<p class="table-note">收入口径按家庭月收入的 <b>50%</b>（即「月供超收入 50%」提示里的那条线）；想更保守可对照下方 45%~5% 各档的可贷上限。</p>` : ''}`;
   }
 
   /* ---- 收入占比四档对照表 ---- */
