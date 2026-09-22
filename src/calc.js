@@ -341,6 +341,63 @@ function calculate(input) {
     notes.push('未填写家庭月收入，已跳过「月还贷额 ≤ 家庭月收入 50%」这一硬性校验。');
   }
 
+  /* ---------------- 8.5 推荐贷款金额 ---------------- */
+  // 推荐 = min(贷款需求, 公积金可贷上限, 首付约束可贷额, 收入50%月供上限[已填收入时])
+  //   · 公积金可贷上限 maxLoanGjj：公式额（余额×倍数 + 缴存×到退休月数）与上限封顶后的结果
+  //   · 首付约束 capPrice：总价 × (1 − 最低首付比例)，贷款不得把首付挤穿政策线
+  //   · 收入上限 income.maxLoanByIncome：家庭月收入 50% 月供上限反推的「公积金拉满 + 商贷补足」
+  // 扣公积金口径：月缴存先抵扣月供，实付现金 ≤ 收入×50%，上限放宽为 tiers[0].maxLoanAfterGjj
+  const capPrice = yuan(Math.max(0, totalPrice * (1 - minDownRatio)));
+  const recCands = [
+    { key: 'need', label: '你的贷款需求', cap: loanNeed },
+    { key: 'gjj', label: `公积金可贷上限（${(maxLoanGjj / 10000).toFixed(0)} 万，含上浮封顶）`, cap: maxLoanGjj },
+    { key: 'price', label: `首付约束（总价 ${(totalPrice / 10000).toFixed(0)} 万 × (1 − ${(minDownRatio * 100).toFixed(0)}%) = ${(capPrice / 10000).toFixed(0)} 万）`, cap: capPrice }
+  ];
+  if (income) recCands.push({ key: 'income', label: `家庭月收入 50% 月供上限（可贷 ${yuan(income.maxLoanByIncome)} 元）`, cap: income.maxLoanByIncome });
+  const recBind = recCands.reduce((a, b) => (b.cap < a.cap ? b : a));
+  const recAmount = yuan(Math.max(0, recBind.cap));
+
+  const recGjj = Math.min(recAmount, maxLoanGjj);
+  const recComm = Math.max(0, recAmount - recGjj);
+  const recGjjPay = payment(recGjj, gr.rate, months, method);
+  const recCommPay = payment(recComm, commercialRate, months, method);
+  const recMonthly = yuan(recGjjPay.monthly + recCommPay.monthly);
+  const recFirst = yuan(recGjjPay.first + recCommPay.first);
+
+  let recAmountAfterGjj = null, recBindAfterGjj = null;
+  if (income) {
+    const cands2 = recCands.filter((c) => c.key !== 'income').concat([
+      { key: 'incomeAfterGjj', label: `家庭月收入 50% 月供上限（扣公积金口径，可贷 ${yuan(income.tiers[0].maxLoanAfterGjj)} 元）`, cap: income.tiers[0].maxLoanAfterGjj }
+    ]);
+    recBindAfterGjj = cands2.reduce((a, b) => (b.cap < a.cap ? b : a));
+    recAmountAfterGjj = yuan(Math.max(0, recBindAfterGjj.cap));
+  }
+
+  const recommend = {
+    loanNeed,
+    amount: recAmount,
+    amountAfterGjj: recAmountAfterGjj,
+    covered: loanNeed <= recAmount + 1,
+    binding: recBind.key,
+    bindingLabel: recBind.label,
+    bindingAfterGjj: recBindAfterGjj ? recBindAfterGjj.key : null,
+    gap: yuan(Math.max(0, loanNeed - recAmount)),
+    caps: {
+      gjj: maxLoanGjj,
+      price: capPrice,
+      income: income ? income.maxLoanByIncome : null,
+      incomeAfterGjj: income ? income.tiers[0].maxLoanAfterGjj : null
+    },
+    gjjPart: yuan(recGjj),
+    commPart: yuan(recComm),
+    monthly: recMonthly,
+    first: recFirst,
+    incomeRatio: familyIncome > 0 ? recMonthly / familyIncome : null
+  };
+  if (!recommend.covered) {
+    notes.push(`推荐贷款金额 ${yuan(recAmount).toLocaleString('zh-CN')} 元：受「${recBind.label}」约束，比你的需求低 ${yuan(loanNeed - recAmount).toLocaleString('zh-CN')} 元${recAmountAfterGjj != null && recAmountAfterGjj > recAmount ? `；若按「扣公积金」口径（缴存先抵月供）可放宽到 ${yuan(recAmountAfterGjj).toLocaleString('zh-CN')} 元。` : '。'}`);
+  }
+
   /* ---------------- 9. 余额提取 ---------------- */
   const mult = cfg.loan.balance_multiplier;   // 账户余额 ×10
   const downPayment = yuan(Math.max(0, totalPrice - loanNeed));
@@ -522,6 +579,7 @@ function calculate(input) {
     fullCover,
     payment: { gjj: gjjPay, commercial: commPay, total },
     income,
+    recommend,
     withdraw,
     cashflow,
     plans,

@@ -641,6 +641,41 @@ it('收入占比四档对照：50/40/30/20% 齐全，扣公积金口径 ≥ 纯�
   assert.ok(near(t[0].maxLoan, r.income.maxLoanByIncome, 1), '50% 档应与 maxLoanByIncome 一致');
 });
 
+it('推荐贷款金额 = min(需求, 公积金上限, 首付约束, 收入50%上限)，需求可落地时推荐=需求', () => {
+  // 场景一：需求 160 万，各上限都够 → 推荐 = 需求
+  const r1 = calculate({ ...base, loanNeed: 1600000, familyMonthlyIncome: 14000 });
+  const rec1 = r1.recommend;
+  assert.ok(rec1 && rec1.covered, '需求在各上限内时应 covered');
+  assert.ok(near(rec1.amount, 1600000, 1), '未触上限时推荐应等于需求');
+  assert.strictEqual(rec1.binding, 'need', 'binding 应为 need');
+  assert.ok(near(rec1.gjjPart + rec1.commPart, rec1.amount, 1), '拆分合计应等于推荐额');
+  // 推荐额月供应等于按拆分重算的月供（等额本息下首月=月供）
+  assert.ok(near(rec1.first, rec1.monthly, 1), '等额本息下首月应等于月供');
+
+  // 场景二：收入放宽（月入 6 万），需求 250 万 > 公积金上限 200 万 → 推荐被公积金上限卡住
+  const r2 = calculate({ ...base, loanNeed: 2500000, familyMonthlyIncome: 60000 });
+  const rec2 = r2.recommend;
+  assert.ok(!rec2.covered, '需求超上限时不应 covered');
+  assert.ok(near(rec2.amount, rec2.caps.gjj, 1), '公积金上限最紧时推荐=公积金上限');
+  assert.strictEqual(rec2.binding, 'gjj', 'binding 应为 gjj');
+  assert.ok(rec2.gap > 0 && near(rec2.loanNeed - rec2.gap, rec2.amount, 1), 'gap = 需求 − 推荐额');
+
+  // 场景三：收入紧（月入 6000）→ 推荐被收入 50% 上限卡住，扣公积金口径更宽
+  const r3 = calculate({ ...base, loanNeed: 2000000, familyMonthlyIncome: 6000 });
+  const rec3 = r3.recommend;
+  assert.strictEqual(rec3.binding, 'income', '收入最紧时 binding 应为 income');
+  assert.ok(near(rec3.amount, rec3.caps.income, 1), '收入最紧时推荐=收入上限');
+  assert.ok(rec3.amountAfterGjj >= rec3.amount - 1, '扣公积金口径推荐应不低于纯口径');
+  // 扣公积金口径的 binding 要么还是公积金/首付，要么是 incomeAfterGjj
+  assert.ok(['need', 'gjj', 'price', 'incomeAfterGjj'].includes(rec3.bindingAfterGjj), 'bindingAfterGjj 取值非法');
+
+  // 场景四：未填收入 → 推荐只看公积金/首付/需求，不报 income 字段
+  const r4 = calculate({ ...base, loanNeed: 1600000 });
+  const rec4 = r4.recommend;
+  assert.strictEqual(rec4.caps.income, null, '未填收入时 income 上限应为 null');
+  assert.strictEqual(rec4.amountAfterGjj, null, '未填收入时不应有扣公积金口径推荐');
+});
+
 /* ------------------------------ 执行 ------------------------------ */
 
 let failed = 0;

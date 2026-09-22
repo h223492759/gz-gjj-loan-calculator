@@ -959,6 +959,25 @@ function render(r) {
       : `<div class="row"><span class="rk">收入校验</span><span class="rv">已跳过<small>未填家庭月收入</small></span></div>`}
     </div>`;
 
+  /* ---- 推荐贷款金额 ---- */
+  if (r.recommend) {
+    const rec = r.recommend;
+    html += `<div class="sec-title">推荐贷款金额</div>
+    <div class="rows">
+      <div class="row hl-row"><span class="rk">推荐贷款金额</span>
+        <span class="rv">${yuan(rec.amount)} 元<small>${rec.covered
+          ? '✅ 你的贷款需求可以全额落地（推荐 = 需求本身，未触任何上限）'
+          : `受「${esc(rec.bindingLabel)}」约束，比需求 ${yuan(rec.loanNeed)} 元低 ${yuan(rec.gap)} 元`}</small></span></div>
+      ${rec.amountAfterGjj != null && rec.amountAfterGjj !== rec.amount ? `<div class="row"><span class="rk">扣公积金口径推荐</span>
+        <span class="rv">${yuan(rec.amountAfterGjj)} 元<small>每月缴存 ${yuan(r.income.depositSum)} 元先抵扣月供、实付现金 ≤ 收入 50%，上限因此放宽</small></span></div>` : ''}
+      <div class="row"><span class="rk">推荐额拆分</span><span class="rv">公积金 ${wan(rec.gjjPart)} 万 + 商贷 ${wan(rec.commPart)} 万</span></div>
+      <div class="row"><span class="rk">推荐额月供（等额本息）</span><span class="rv">首月 ${yuan(rec.first)} 元 / 之后 ${yuan(rec.monthly)} 元${rec.incomeRatio != null ? `<small>占家庭月收入 ${(rec.incomeRatio * 100).toFixed(1)}%</small>` : ''}</span></div>
+      <div class="row"><span class="rk">各约束上限<small>推荐 = 需求与各上限的最小值</small></span>
+        <span class="rv">公积金 ${wan(rec.caps.gjj)} 万 · 首付约束 ${wan(rec.caps.price)} 万${rec.caps.income != null ? ` · 收入 50% ${wan(rec.caps.income)} 万` : ' · 未填收入，收入上限未计'}</span></div>
+    </div>
+    ${rec.caps.income != null ? `<p class="table-note">收入口径按家庭月收入的 <b>50%</b>（即「月供超收入 50%」提示里的那条线）；想更保守可对照下方 40% / 30% / 20% 档的可贷上限。</p>` : ''}`;
+  }
+
   /* ---- 收入占比四档对照表 ---- */
   if (r.income && r.income.tiers) {
     html += `<div class="sec-title">收入占比对照（${r.termYears} 年期 · 等额本息）</div>
