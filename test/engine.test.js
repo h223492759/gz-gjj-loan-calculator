@@ -342,9 +342,13 @@ it('还款方式对比：等额本金总利息少于等额本息', () => {
   assert.ok(near(a.first, a.last, 0.01), '等额本息每月月供应恒定');
 });
 
-it('参数时效检测：参数日期在未来/今天为 ok，一年以上为 stale', () => {
-  assert.strictEqual(R.freshness('2026-09-21').level, 'ok');
-  assert.strictEqual(R.freshness('2028-01-01').level, 'stale');
+it('参数时效检测：参数日期在今天为 ok，一年以上为 stale（基准日随 config.as_of 动态取，不钉死）', () => {
+  const asOf = R.rules().as_of;
+  assert.strictEqual(R.freshness(asOf).level, 'ok', `参数日期当天应为 ok（as_of=${asOf}）`);
+  // as_of + 400 天 → 超过 365 天上限 → stale
+  const d = new Date(`${asOf}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 400);
+  assert.strictEqual(R.freshness(d.toISOString().slice(0, 10)).level, 'stale');
 });
 
 it('参数时效的基准日必须是完整日期（曾因只到月而显示「距今 -20 天」）', () => {
@@ -639,6 +643,24 @@ it('收入占比十档对照：50% 起每 5% 到 5% 齐全，扣公积金口径 
   }
   // 50% 档与主结果里的 maxLoanByIncome 同口径
   assert.ok(near(t[0].maxLoan, r.income.maxLoanByIncome, 1), '50% 档应与 maxLoanByIncome 一致');
+});
+
+it('2026-11-10 提取新政（规字〔2026〕4号）参数随结果下发', () => {
+  const r = calculate(base);
+  const np = r.withdraw.newPolicy;
+  assert.ok(np, 'withdraw.newPolicy 应存在');
+  // 租房：无房 3000 元/人/月（原 2000），备案 8000 元/户；多孩 4000 / 10000
+  assert.strictEqual(np.rent.no_house_per_person_monthly, 3000, '无房租房提取应为 3000 元/人/月');
+  assert.strictEqual(np.rent.no_house_multi_child_monthly, 4000, '多孩无房应为 4000 元/人/月');
+  assert.strictEqual(np.rent.registered_cap_household, 8000, '备案租房应为 8000 元/户');
+  assert.strictEqual(np.rent.registered_cap_multi_child, 10000, '多孩备案应为 10000 元/户');
+  // 装修 / 物业费 / 频次
+  assert.strictEqual(np.renovation.with_invoice_per_sqm, 1800, '装修发票口径应为 1800 元/㎡');
+  assert.strictEqual(np.renovation.no_invoice_per_sqm, 800, '装修无发票口径应为 800 元/㎡');
+  assert.strictEqual(np.property_fee.per_sqm_per_month * np.property_fee.annual_months, 36, '物业费每年每 ㎡ 应为 36 元');
+  assert.ok(/每月一次/.test(np.purchase_nationwide), '购房提取频次应为每月一次');
+  // 旧的一次性提取口径（≤ 首期房款）不受 4 号文影响，仍在
+  assert.ok(np.note === undefined || typeof np.note === 'string');
 });
 
 it('推荐贷款金额 = min(需求, 公积金上限, 首付约束, 收入50%上限)，需求可落地时推荐=需求', () => {

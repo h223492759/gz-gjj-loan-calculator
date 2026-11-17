@@ -937,6 +937,24 @@ function render(r) {
       ${(r.withdraw.perPersonInput || []).map((p, i) => `<div class="row"><span class="rk">· ${esc(p.label)}</span><span class="rv">可提取 ${yuan(p.withdrawable)} 元<small>账户余额 ${yuan(p.balance)} 元 − 须保留 ${yuan(p.keep)} 元${r.withdraw.perPerson[i] ? `；保留满贷时少提 ${yuan(p.withdrawable - r.withdraw.perPerson[i].withdrawable)} 元` : ''}</small></span></div>`).join('')}
       <div class="row"><span class="rk">政策一次性提取上限</span><span class="rv">${yuan(r.withdraw.onceLimit)} 元<small>不超过实际支付的首期房款，也不超过账户余额</small></span></div>
       <div class="row"><span class="rk">该套住房提取总额上限</span><span class="rv">${yuan(r.withdraw.totalLimit)} 元<small>不超过实际支付的购房本息</small></span></div>
+      ${(() => {
+        const np = r.withdraw.newPolicy;
+        if (!np) return '';
+        const rent = np.rent || {};
+        const ren = np.renovation || {};
+        const pf = np.property_fee || {};
+        return `
+      <div class="row hl-row"><span class="rk">提取新政速览<small>穗公积金中心规字〔2026〕4号 · 2026-11-10 印发即施行</small></span>
+        <span class="rv">购房提取全国可提、频次改<b>每月一次</b><small>${esc(np.purchase_timing || '')}</small></span></div>
+      <div class="row"><span class="rk">· 租房提取<small>每月可提，当年未提不结转</small></span>
+        <span class="rv">无房 ${yuan(rent.no_house_per_person_monthly)} 元/人/月<small>租赁备案 ≤ 每月租金且 ≤ ${yuan(rent.registered_cap_household)} 元/户；多孩家庭上浮：备案 ${yuan(rent.registered_cap_multi_child)} 元/户、无房 ${yuan(rent.no_house_multi_child_monthly)} 元/人</small></span></div>
+      <div class="row"><span class="rk">· 装修提取<small>同一缴存人再次申请间隔 ${ren.interval_years} 年</small></span>
+        <span class="rv">≤ 建筑面积×${yuan(ren.with_invoice_per_sqm)} 元/㎡<small>有资质公司发票：≤ 发票金额且 ≤ 面积×${yuan(ren.with_invoice_per_sqm)} 元/㎡；无发票但持房满 8 年：面积×${yuan(ren.no_invoice_per_sqm)} 元/㎡</small></span></div>
+      <div class="row"><span class="rk">· 物业费提取<small>每年一次，可与其他提取同步，无须发票</small></span>
+        <span class="rv">建筑面积×${yuan(pf.per_sqm_per_month)} 元/㎡×${pf.annual_months}<small>即每 ㎡ 每年可提 ${yuan(pf.per_sqm_per_month * pf.annual_months)} 元</small></span></div>
+      <div class="row"><span class="rk">· 老旧住房自主更新</span>
+        <span class="rv">每人每套一次<small>${esc(np.old_home_renewal || '')}</small></span></div>`;
+      })()}
       <div class="row"><span class="rk">每月缴存合计</span><span class="rv">${yuan(r.cashflow.monthlyDeposit)} 元</span></div>
       <div class="row"><span class="rk">每月自掏现金（等额本息）</span><span class="rv">${yuan(r.cashflow.cashMonthly)} 元</span></div>
     </div>
@@ -1296,6 +1314,22 @@ function renderPolicy() {
           ${row('结清后', esc(m.withdraw.after_settle), '')}
           ${row('总额上限', esc(m.withdraw.total_limit), '')}
         </div>
+        ${(() => {
+          const np = m.withdraw.extract_2026_11;
+          if (!np) return '';
+          const rent = np.rent || {};
+          const ren = np.renovation || {};
+          const pf = np.property_fee || {};
+          return `<div class="rows" style="margin-top:10px">
+          ${row('提取新政（2026-11-10）', esc(np.purchase_nationwide), '')}
+          ${row('· 申请时点', esc(np.purchase_timing), '')}
+          ${row('· 租房提取', `无房 ${rent.no_house_per_person_monthly} 元/人/月（多孩 ${rent.no_house_multi_child_monthly}）；租赁备案 ≤ 每月租金且 ≤ ${rent.registered_cap_household} 元/户（多孩 ${rent.registered_cap_multi_child}）`, '')}
+          ${row('· 装修提取', `≤ 面积×${ren.with_invoice_per_sqm} 元/㎡（有资质发票且 ≤ 发票金额）；无发票持房满 8 年 ≤ 面积×${ren.no_invoice_per_sqm} 元/㎡；再申请间隔 ${ren.interval_years} 年`, '')}
+          ${row('· 物业费提取', `面积×${pf.per_sqm_per_month} 元/㎡×${pf.annual_months}，每年一次，可与其他提取同步，无须发票`, '')}
+          ${row('· 老旧住房更新', esc(np.old_home_renewal), '')}
+          ${row('· 多孩认定', esc(np.multi_child_rule), '')}
+        </div>`;
+        })()}
       </div>
 
       <div class="card">

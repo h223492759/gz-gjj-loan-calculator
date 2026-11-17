@@ -473,7 +473,9 @@ function calculate(input) {
     perPersonInput: byInput.perPerson,
     remainInAccount: byInput.keepBalance,
     totalLimit: yuan(totalPrice + total.totalInterest),
-    note: cfg.withdraw.once_limit
+    note: cfg.withdraw.once_limit,
+    // 2026-11-10 提取新政（规字〔2026〕4号）：购房提取全国可提+每月一次，新增租房提额/装修/物业费/老旧更新场景
+    newPolicy: cfg.withdraw.extract_2026_11 || null
   };
   if (byInput.safeLimit > 0) {
     const parts = [];
@@ -482,6 +484,9 @@ function calculate(input) {
     notes.push(`账户余额有富余：${parts.join('；')}（已向下取整到元）。${byInput.afterWithdraw.text}`);
   } else if (binding.key === 'formula') {
     notes.push(`可贷额正被「余额 × ${mult} + 月缴存额 × 到退休月数」这一项卡住，账户余额每少 1 元，可贷额就少 ${mult} 元；公积金满贷上限 ${yuan(maxLoanGjj).toLocaleString('zh-CN')} 元已把公式额用尽，因此当前可提取额为 0。`);
+  }
+  if (cfg.withdraw.extract_2026_11) {
+    notes.push('2026-11-10 提取新政已生效：购房提取全国可提、频次改为每月一次；无房租房提取 3000 元/人/月，另新增装修、物业费、老旧住房自主更新提取场景（详见下方「提取新政速览」）。');
   }
 
   /* ---------------- 10. 月度现金流（公积金账户抵扣） ---------------- */
